@@ -623,6 +623,9 @@ fun VelaMapView(
     onNavRoadLatin: (Map<String, String>) -> Unit = {},
     navFollowing: Boolean = true,
     navNorthUp: Boolean = false,
+    // MinMode: plain white arrow puck with no disc on a dark halo (Google's
+    // black/white look) instead of the navy-disc puck.
+    whitePuck: Boolean = false,
     // Free-drive follow (no route open): when true the camera tracks the live fix north-up and
     // the heading beam is smoothed per frame, the way the puck is during nav. The caller drops it
     // to false on a user pan and raises it again on the locate tap.
@@ -2948,6 +2951,11 @@ fun VelaMapView(
                     map.gesturesManager.shoveGestureDetector.maxShoveAngle = 55f
                     map.gesturesManager.shoveGestureDetector.pixelDeltaThreshold = 8f
                 }
+                // Two-finger ROTATE is OFF (user call: the twist never felt right next to
+                // Google's, and an off-axis pinch kept turning the map). Pinch = zoom, vertical
+                // two-finger drag = tilt, nothing else competes. The compass button still resets
+                // north; nav heading-up still rotates the camera itself.
+                map.uiSettings.isRotateGesturesEnabled = false
                 map.setMaxPitchPreference(70.0)
                 // Tap a labeled POI on the map to open it. (Named so the D-pad
                 // controller's OK-at-crosshair runs the EXACT same resolution path;
@@ -3167,7 +3175,7 @@ fun VelaMapView(
                         MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE
                     // The user grabbing the map is a signal in its own right — MapScreen uses it
                     // to drop the results sheet down out of the way (Google's behavior).
-                    // A PINCH (or two-finger tilt) is NOT that signal: zooming while the free-drive
+                    // A PINCH or two-finger tilt is NOT that signal: zooming while the free-drive
                     // follow is tracking you must keep tracking, just at the new zoom (user
                     // 2026-07-17 — same pan-vs-pinch split nav's onMove listener makes). By the
                     // time the camera first moves, onScaleBegin/onShoveBegin has set the flag —
@@ -3200,8 +3208,13 @@ fun VelaMapView(
                     }
                     override fun onMoveEnd(detector: MoveGestureDetector) {}
                 })
+                // Pinch owns the two-finger session outright (rotate is disabled): a
+                // slightly-off-axis pinch zooms only, never turns. `scaling` (pinch) is the
+                // composable-level flag declared above (near the other gesture holders).
                 map.addOnScaleListener(object : MapLibreMap.OnScaleListener {
                     override fun onScaleBegin(detector: StandardScaleGestureDetector) {
+                        // A session already tilting stays a tilt: refuse the pinch takeover.
+                        if (shoving[0]) return
                         scaling[0] = true
                         overviewLive[0] = false
                         browseZoomGoal[0] = Double.NaN // fingers beat a pending locate-tap zoom
@@ -3226,8 +3239,14 @@ fun VelaMapView(
                 // every frame and the gesture jittered and lost (user 2026-07-15). The shove flag
                 // makes the ticker step aside like a pinch, and the resulting tilt sticks as an
                 // override the same way a pinch zoom does. Cleared when nav ends.
+                // Tilt only wins a session the pinch didn't claim: a vertical-ish two-finger
+                // drag that also drifts sideways used to tilt AND pan/zoom at once.
                 map.addOnShoveListener(object : MapLibreMap.OnShoveListener {
-                    override fun onShoveBegin(detector: ShoveGestureDetector) { shoving[0] = true }
+                    override fun onShoveBegin(detector: ShoveGestureDetector) {
+                        // A session already pinching stays a pinch: refuse the tilt takeover.
+                        if (scaling[0]) return
+                        shoving[0] = true
+                    }
                     override fun onShove(detector: ShoveGestureDetector) {
                         if (navModeHolder.value) {
                             navUserTilt[0] = map.cameraPosition.tilt
@@ -3811,7 +3830,7 @@ fun VelaMapView(
         // (issue #344), so a size/color change reloads to re-register it.
         // The offline basemap rides the key: entering or leaving an installed region reloads the
         // style with its tile source pointed at the local archive (or back at OpenFreeMap).
-        val styleKey = "$styleUri|dark=$darkTheme|amoled=$amoled|pal=${app.vela.ui.MapColors.current()}|sat=$satelliteOn|puck=${app.vela.ui.PuckStyle.key()}|hn=${app.vela.ui.HouseNumbers.level.value}|base=${basemapArchive ?: ""}"
+        val styleKey = "$styleUri|dark=$darkTheme|amoled=$amoled|pal=${app.vela.ui.MapColors.current()}|sat=$satelliteOn|puck=${app.vela.ui.PuckStyle.key()}|wp=$whitePuck|hn=${app.vela.ui.HouseNumbers.level.value}|base=${basemapArchive ?: ""}"
         if (appliedStyleKey != styleKey) {
             appliedStyleKey = styleKey
             // An installed offline basemap wins over every style source: the remote Liberty URL
@@ -3862,7 +3881,7 @@ fun VelaMapView(
                         }
                     }.onFailure { android.util.Log.w("VelaBasemap", "re-attach failed", it) }
                 }
-                ensureLayers(style)
+                ensureLayers(style, whitePuck)
                 lastAppliedMarkers = null // fresh style = empty sources; force applyData to repopulate
                 lastOsmPoiVis = null
                 lastPoiFuelOnly = null
@@ -4251,8 +4270,8 @@ fun VelaMapView(
         }
     }
     if (puckOverlayOn.value) {
-        val puckKey = app.vela.ui.PuckStyle.key()
-        val puckImg = remember(puckKey) { navPuckBitmap().asImageBitmap() }
+        val puckKey = app.vela.ui.PuckStyle.key() + "|wp=$whitePuck"
+        val puckImg = remember(puckKey) { (if (whitePuck) minModePuckBitmap() else navPuckBitmap()).asImageBitmap() }
         val sizePx = puckImg.width
         androidx.compose.foundation.Image(
             bitmap = puckImg,
@@ -4273,7 +4292,7 @@ fun VelaMapView(
     }
 }
 
-private fun ensureLayers(style: Style) {
+private fun ensureLayers(style: Style, whitePuck: Boolean = false) {
     // Kill the style light: MapLibre lights fill-extrusion faces toward white (default
     // intensity 0.5), so at z16+ the building-3d tops rendered ~40% brighter than the
     // palette (#1c3b69 became #2e5590) while Google keeps buildings the SAME color at
@@ -4386,7 +4405,7 @@ private fun ensureLayers(style: Style) {
     applyPoiTierFilters(style, fuelOnly = false)
 
     if (style.getImage(ME_ARROW_IMG) == null) style.addImage(ME_ARROW_IMG, arrowBitmap())
-    if (style.getImage(NAV_PUCK_IMG) == null) style.addImage(NAV_PUCK_IMG, navPuckBitmap())
+    if (style.getImage(NAV_PUCK_IMG) == null) style.addImage(NAV_PUCK_IMG, if (whitePuck) minModePuckBitmap() else navPuckBitmap())
 
     // Terrain relief — only over the OpenMapTiles basemap (the keyless path).
     if (basemapSrc(style) != null) ensureHillshade(style)
@@ -4429,7 +4448,7 @@ private fun ensureLayers(style: Style) {
         // Insert the route line BELOW the basemap's first label layer (Google-style) so road
         // names and POI text stay legible *on top* of it, instead of being painted over.
         val routeLine = LineLayer(ROUTE_LAYER, ROUTE_SRC).withProperties(
-            PropertyFactory.lineColor("#1F6FEB"),
+            PropertyFactory.lineColor("#1A73E8"),
             // Zoom-scaled like Google's stripe (user 2026-07-15: "the blue stripe looks bigger
             // in Google") - a constant 6 px reads THIN at nav zooms (17-18.5) where Google
             // draws it fat over the road. Browse zooms barely change.
@@ -4472,7 +4491,7 @@ private fun ensureLayers(style: Style) {
         // label anchor, so it draws ON TOP of the full (traversed-gray) line during nav.
         style.addSource(GeoJsonSource(ROUTE_AHEAD_SRC, GeoJsonOptions().withLineMetrics(true)))
         val routeAhead = LineLayer(ROUTE_AHEAD_LAYER, ROUTE_AHEAD_SRC).withProperties(
-            PropertyFactory.lineColor("#1F6FEB"),
+            PropertyFactory.lineColor("#1A73E8"),
             PropertyFactory.lineWidth(ROUTE_WIDTH),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
@@ -4482,7 +4501,7 @@ private fun ensureLayers(style: Style) {
         // The far-tail twin (AUDIT FIX 9): identical paint, uploaded once per window advance.
         style.addSource(GeoJsonSource(ROUTE_TAIL_SRC, GeoJsonOptions().withLineMetrics(true)))
         val routeTail = LineLayer(ROUTE_TAIL_LAYER, ROUTE_TAIL_SRC).withProperties(
-            PropertyFactory.lineColor("#1F6FEB"),
+            PropertyFactory.lineColor("#1A73E8"),
             PropertyFactory.lineWidth(ROUTE_WIDTH),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
@@ -4493,7 +4512,7 @@ private fun ensureLayers(style: Style) {
         // the ahead line gray and owns the seam under the arrow; its per-frame change is paint only).
         style.addSource(GeoJsonSource(ROUTE_CUT_SRC, GeoJsonOptions().withLineMetrics(true)))
         val routeCut = LineLayer(ROUTE_CUT_LAYER, ROUTE_CUT_SRC).withProperties(
-            PropertyFactory.lineColor("#1F6FEB"),
+            PropertyFactory.lineColor("#1A73E8"),
             PropertyFactory.lineWidth(ROUTE_WIDTH),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
@@ -5083,7 +5102,7 @@ private fun ensureLayers(style: Style) {
         style.addSource(GeoJsonSource(PREVIEW_SRC))
         style.addLayer(
             CircleLayer(PREVIEW_LAYER, PREVIEW_SRC).withProperties(
-                PropertyFactory.circleColor("#1F6FEB"),
+                PropertyFactory.circleColor("#1A73E8"),
                 PropertyFactory.circleRadius(9f),
                 PropertyFactory.circleStrokeColor("#FFFFFF"),
                 PropertyFactory.circleStrokeWidth(3f),
@@ -7319,7 +7338,7 @@ private fun projectOnSegment(p: LatLng, a: LatLng, b: LatLng): Pair<LatLng, Doub
     return LatLng(ay + t * dy, (ax + t * dx) / k) to t
 }
 
-private val ROUTE_FREEFLOW = android.graphics.Color.parseColor("#1F6FEB")
+private val ROUTE_FREEFLOW = android.graphics.Color.parseColor("#1A73E8")
 private val ROUTE_DRIVEN = android.graphics.Color.parseColor("#9AA0A6")
 private val TRAFFIC_MODERATE = android.graphics.Color.parseColor("#E8923D") // amber
 private val TRAFFIC_HEAVY = android.graphics.Color.parseColor("#D93838")    // red
@@ -8011,6 +8030,38 @@ internal fun navPuckBitmap(
         arrow,
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (whiteDisc) blue else android.graphics.Color.WHITE
+            style = Paint.Style.FILL
+        },
+    )
+    return bmp
+}
+
+/** MinMode puck: a plain WHITE chevron on a near-black halo disc, no color —
+ *  Google's black/white look. The halo keeps the arrow readable where it sits
+ *  on the white route line; on the black map only the arrow lights pixels. */
+private fun minModePuckBitmap(): Bitmap {
+    val size = 202
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    canvas.scale(size / 176f, size / 176f)
+    val cx = 88f
+    val cy = 88f
+    // Near-black halo so the white arrow survives over the white route line.
+    canvas.drawCircle(
+        cx, cy, 65f,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(200, 0, 0, 0) },
+    )
+    val arrow = Path().apply {
+        moveTo(cx, cy - 32f)          // tip
+        lineTo(cx + 27f, cy + 26f)    // bottom-right
+        lineTo(cx, cy + 12f)          // notch
+        lineTo(cx - 27f, cy + 26f)    // bottom-left
+        close()
+    }
+    canvas.drawPath(
+        arrow,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
             style = Paint.Style.FILL
         },
     )

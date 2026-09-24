@@ -209,9 +209,9 @@ private fun buildPanelWebView(
     WebViewIdentity.apply(wv.settings)
     WebProxy.install(wv) // the POST shim, when the proxy is on (WebProxy)
     SessionRotation.consumeCacheClear(wv) // the first Google WebView after a new session
-    // Match Vela's SheetPalette exactly (Dark #1F1F1F / Light #FFFFFF) so the WebView surface
+    // Match Vela's SheetPalette exactly (Dark #202124 / Light #FFFFFF) so the WebView surface
     // behind the page is the sheet color before the page even paints.
-    wv.setBackgroundColor(if (dark) 0xFF1F1F1F.toInt() else 0xFFFFFFFF.toInt())
+    wv.setBackgroundColor(if (dark) 0xFF202124.toInt() else 0xFFFFFFFF.toInt())
     // Scroll-sync: the panel lives inside the sheet's scrollable column and OWNS every vertical
     // gesture (disallow-intercept re-asserted on EVERY event — the Compose sheet resets a
     // once-per-gesture disallow and steals the stream otherwise). At a scroll BOUNDARY — reviews
@@ -570,7 +570,7 @@ private fun buildPanelWebView(
 private fun carveScript(dark: Boolean, fullScreen: Boolean): String {
     // Vela's own sheet color (SheetPalette Dark/Light) — the panel matches it EXACTLY so there's
     // no seam with the surrounding place sheet.
-    val bg = if (dark) "#1f1f1f" else "#ffffff"
+    val bg = if (dark) "#202124" else "#ffffff"
     // Dark = a scoped invert on the PANEL CONTENT ONLY (main), NOT its background. The Vela color
     // lives on <body> (which the filter doesn't touch — it's on main), and main + every ancestor
     // are made transparent so that color is the panel's backdrop; only Google's content inverts.

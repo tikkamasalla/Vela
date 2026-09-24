@@ -117,15 +117,17 @@ fun SearchBar(
     // tone as the map, so the bar dissolved into it (issue #351). Dark keeps the flat tone: a
     // shadow reads as a smear on a dark map.
     val dark = app.vela.ui.theme.isAppInDarkTheme()
+    // Google-affixed chrome: the bar docks to the top edge with square corners and no
+    // floating margin, so it reads as a header rather than a floating pill.
     Card(
         modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = if (dark) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainerLowest),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (dark) 0.dp else 6.dp),
-        border = if (dark) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        shape = RoundedCornerShape(0.dp),
+        colors = CardDefaults.cardColors(containerColor = if (dark) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surfaceContainerLowest),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (dark) 0.dp else 4.dp),
+        border = null,
     ) {
         Row(
-            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // A back arrow while the full-screen search page is open, else the
@@ -172,7 +174,8 @@ fun SearchBar(
                     Text(
                         stringResource(R.string.search_placeholder),
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        // Google placeholder reads near-white (#E3E3E3), not dim grey.
+                        color = androidx.compose.ui.graphics.Color(0xFFE3E3E3),
                     )
                 }
                 // The TEXT stays controlled by [query] (the shown value is always the caller's;

@@ -271,7 +271,10 @@ fun GoogleStyleDirectionsPanel(
                                 withStyle(SpanStyle(color = trafficEtaColor(route) ?: ink, fontWeight = FontWeight.Medium, fontSize = 22.sp)) {
                                     append(formatDuration(eta))
                                 }
-                                withStyle(SpanStyle(color = dim, fontSize = 18.sp)) { append(" (${formatDistance(route.distanceMeters)})") }
+                                // Google renders the "(21.0 km)" in the same white as the time,
+                                // not the dim grey (verified on the chooser screenshot) — the whole
+                                // headline reads as one figure.
+                                withStyle(SpanStyle(color = ink, fontSize = 18.sp)) { append(" (${formatDistance(route.distanceMeters)})") }
                             },
                         )
                         Spacer(Modifier.height(2.dp))
@@ -281,7 +284,7 @@ fun GoogleStyleDirectionsPanel(
                         val via = route.summary?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.exp_chooser_via, it) }
                         Text(
                             when {
-                                isFastest && routes.size > 1 -> listOfNotNull(stringResource(R.string.exp_chooser_fastest), via).joinToString(" · ")
+                                isFastest -> listOfNotNull(stringResource(R.string.exp_chooser_fastest), via).joinToString(" · ")
                                 deltaMin >= 1 -> listOfNotNull(stringResource(R.string.exp_chooser_slower, formatDuration(eta - fastest)), via).joinToString(" · ")
                                 else -> via ?: ""
                             },

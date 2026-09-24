@@ -122,6 +122,16 @@ internal fun NavigationSettingsScreen(vm: MapViewModel, onBack: () -> Unit) {
                 else R.string.settings_pause_in_bar_hint
             ),
         )
+        // Low-power lock overlay (the Pixel Maps power-saving idea, built in): while
+        // navigating, screen-off over the lock screen shows a pitch-black turn screen
+        // instead of the full map, so a dash mount sips battery. Needs nothing else.
+        GroupDivider()
+        ToggleRow(
+            label = stringResource(R.string.settings_low_power_nav),
+            checked = app.vela.ui.LowPowerNav.on.value,
+            onCheckedChange = { app.vela.ui.LowPowerNav.set(context, it) },
+            hint = stringResource(R.string.settings_low_power_nav_hint),
+        )
         }
         Spacer(Modifier.height(12.dp))
         SettingsGroup {

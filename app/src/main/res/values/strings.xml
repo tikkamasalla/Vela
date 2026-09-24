@@ -486,6 +486,13 @@
     <string name="place_tab_reviews">Reviews</string>
     <string name="place_tab_menu">Menu</string>
     <string name="place_tab_about">About</string>
+    <string name="place_tab_overview">Overview</string>
+    <string name="place_tab_updates">Updates</string>
+    <string name="place_suggest_edit">Suggest an edit</string>
+    <string name="place_search_this_place">Search this place</string>
+    <string name="place_order_online">Order online</string>
+    <string name="place_related_search">Related to your search</string>
+    <string name="mapscreen_back">Back</string>
     <string name="place_sort_relevant">Most relevant</string>
     <string name="place_sort_newest">Newest</string>
     <string name="place_sort_highest">Highest rating</string>
@@ -571,6 +578,10 @@
     <string name="mapscreen_expand_list">Expand list</string>
     <string name="mapscreen_close_results">Close search results</string>
     <string name="mapscreen_filter_open_now">Open now</string>
+    <string name="mapscreen_view_map">View map</string>
+    <string name="mapscreen_filter_cuisine">Cuisine</string>
+    <string name="mapscreen_filter_any_cuisine">Any cuisine</string>
+    <string name="mapscreen_filter_top_rated_chip">Top-rated</string>
     <string name="mapscreen_more_results">More results</string>
     <string name="intent_home_unset">Set Home first (search page, under the search bar)</string>
     <string name="intent_work_unset">Set Work first (search page, under the search bar)</string>
@@ -1018,6 +1029,8 @@
     <string name="settings_pause_in_bar">Pause button on the navigation bar</string>
     <string name="settings_pause_in_bar_hint">Puts pause beside the trip figures, where the step list button would be, and leaves mute with the map buttons. Off puts both on one button at the right of the map. Swipe up or use the arrow to open the step list either way.</string>
     <string name="settings_pause_in_bar_hint_buttons">With \"Prefer buttons over swipes\" on, the bar carries pause and the step list button side by side, and the trip figures shrink to fit.</string>
+    <string name="settings_low_power_nav">Low-power lock screen while navigating</string>
+    <string name="settings_low_power_nav_hint">While navigating, turning the screen off and back on shows Google\'s MinMode over the lock screen: the same live black map, turn banner and ETA as the full app, dimmed for a dash mount. Tap it any time to return to the map.</string>
     <string name="nav_steps_handle_cd">Show steps</string>
     <string name="settings_route_trail">Road behind you</string>
     <string name="settings_route_trail_hint">Keeps the part of the route you have already driven drawn in gray behind the arrow. Off hides it, so only the road ahead is drawn.</string>

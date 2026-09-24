@@ -5,17 +5,20 @@ import androidx.compose.runtime.mutableStateOf
 
 /** Where the name of the road you are driving is shown during navigation (issue #288 asked for
  *  it under the arrow; that pill cannot be centered for long names because it is pinned to the
- *  arrow, so the default is Google's fixed spot above the bottom bar). Values: "off", "bar", "puck". */
+ *  arrow, so the default is Google's fixed spot above the bottom bar). Values: "off", "bar", "puck".
+ *  Default is OFF: Google's nav screen shows no such pill — the road lives in the bottom bar —
+ *  and the user flagged the blue pill as clutter that Google doesn't have. */
 object RoadLabel {
     const val OFF = "off"
     const val BAR = "bar"
     const val PUCK = "puck"
     /** Inside the nav bar, where the lift chevron sits (issue #553). */
     const val IN_BAR = "inbar"
-    val mode = mutableStateOf(BAR)
+    val mode = mutableStateOf(OFF)
 
     fun init(context: Context) {
-        mode.value = prefs(context).getString(KEY, BAR) ?: BAR
+        // No stored value (fresh install or pre-pill build) → OFF, the Google default.
+        mode.value = prefs(context).getString(KEY, null) ?: OFF
     }
 
     fun set(context: Context, value: String) {

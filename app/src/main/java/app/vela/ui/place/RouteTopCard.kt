@@ -83,11 +83,16 @@ fun RouteTopCard(
 ) {
     val ink = MaterialTheme.colorScheme.onSurface
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    // Google's header card is the dark sheet tone (#202124), not the lighter
+    // search-bar grey (#303134) — sampled off the chooser screenshot. The card has
+    // no field boxes or blue text: origin reads blue (it IS your location), the
+    // destination reads white.
+    val cardBg = Color(0xFF202124)
+    val destInk = Color(0xFFE8EAED)
     Card(
         modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        // Same tone as the search bar it replaces, so the top chrome reads as one family.
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = CardDefaults.cardColors(containerColor = cardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)) {
@@ -106,7 +111,7 @@ fun RouteTopCard(
                     editLabel = stringResource(R.string.place_change_start),
                     onClick = onEditOrigin,
                 ) {
-                    // Origin = a ring, teal when it's literally you (the app's "this is me" ink;
+                    // Origin = a ring, blue when it's literally you (the app's "this is me" ink;
                     // gmaps uses its location blue the same way).
                     Box(
                         Modifier
@@ -158,7 +163,7 @@ fun RouteTopCard(
                 }
                 EndpointRow(
                     text = destinationName,
-                    textColor = if (onEditDestination != null) MaterialTheme.colorScheme.primary else ink,
+                    textColor = destInk,
                     bold = true,
                     editable = onEditDestination != null,
                     editLabel = stringResource(R.string.place_change_destination),

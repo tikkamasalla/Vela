@@ -20,6 +20,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -68,8 +69,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Close
@@ -112,18 +113,23 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.SportsScore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Accessible
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Streetview
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
@@ -296,6 +302,10 @@ fun PlaceSheet(
     onCreateListWith: (name: String) -> Unit = {},
     onSetNote: (String?) -> Unit = {},
     onExpandedChange: (Boolean) -> Unit = {},
+    // Google parity extras: the header's search icon opens a text search, and the overflow
+    // holds Suggest-an-edit feedback. Both default to no-ops so existing callers are unaffected.
+    onSearchHere: () -> Unit = {},
+    onSuggestEdit: () -> Unit = {},
     // Bumped by MapScreen when the user grabs the map — the sheet glides down to its minimized
     // card so the map is unobstructed (Google's behavior). 0 = never.
     minimizeTick: Int = 0,
@@ -326,6 +336,8 @@ fun PlaceSheet(
     var showNoteEditor by remember(sheetKey) { mutableStateOf(false) }
     // A tapped photo opens the full-screen gallery; resets when the sheet switches place.
     var galleryStart by remember(sheetKey) { mutableStateOf<Int?>(null) }
+    // The action-row Share pill opens the same share menu as the header button.
+    var shareSheet by remember(sheetKey) { mutableStateOf(false) }
     // Gallery category filter (null = All); resets per place. Chips appear only when Google tagged photos.
     var photoCat by remember(sheetKey) { mutableStateOf<String?>(null) }
 
@@ -630,50 +642,62 @@ fun PlaceSheet(
                 val p = measurable.measure(constraints.copy(minHeight = floorPx, maxHeight = cap))
                 layout(p.width, p.height) { p.place(0, 0) }
             },
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp),
         colors = CardDefaults.cardColors(containerColor = if (dark) SheetDark else SheetLight),
     ) {
         // Card background fills to the screen bottom; pad the content up off the nav bar.
         Column(Modifier.navigationBarsPadding()) {
-            // D-pad-first (docs/dpad.md): when the sheet opens, land focus ON the handle so the
-            // sheet is the active surface — otherwise Compose leaves focus on the search bar
-            // behind the sheet (measured: sometimes the search field, sometimes a photo — the
-            // exact nondeterminism to kill). No-op under touch.
+            // D-pad-first (docs/dpad.md): when the sheet opens, land focus ON the header row
+            // so the sheet is the active surface — otherwise Compose leaves focus on the
+            // search bar behind the sheet. No-op under touch.
             val sheetAutoFocus = rememberDpadAutoFocus()
-            // Drag the handle UP to expand (reviews), DOWN to shrink, down again to dismiss.
-            // TAP toggles expand/peek. The touch target is a tall (36dp) invisible strip — the
-            // 4dp handle is just the visual; a fat hit-area makes it easy to grab.
-            Box(
+            // Google header chrome: full-width header edge-to-edge, NO drag handle above it.
+            // Back arrow (close) left; Share/Search/overflow right, Google order.
+            // The header row itself drags the sheet 1:1 (tap steps one detent) — the old
+            // handle strip is gone, but inner buttons keep their own taps.
+            var overflowOpen by remember { mutableStateOf(false) }
+            Row(
                 Modifier
                     .fillMaxWidth()
                     .focusRequester(sheetAutoFocus)
-                    // D-pad (docs/dpad.md): the handle is a real button — focusable, OK steps a
-                    // detent. clickable replaces the old tap-only detector (same tap behavior
-                    // under touch); the drag detector below is untouched.
-                    .dpadHighlight(RoundedCornerShape(3.dp))
+                    .dpadHighlight(RoundedCornerShape(8.dp))
                     .clickable {
-                        // Tap grows one detent: minimized→peek, peek→expanded, expanded→peek.
-                        // (No-op on a single-detent sheet — a parked car has nowhere to step.)
                         if (!singleDetent) {
                             if (minimizedState.value) minimizedState.value = false
                             else expandedState.value = !expandedState.value
                         }
                     }
                     .pointerInput(Unit) {
-                        // The handle drags the sheet 1:1 and the release coasts to the nearest
-                        // detent on the fling velocity - same physics as dragging the body.
                         sheetDragGestures(dragBy = { dragSheetBy(it) }, settle = { settleFromVelocity(it) })
                     }
-                    .heightIn(min = 36.dp)
-                    .padding(vertical = 14.dp),
-                contentAlignment = Alignment.Center,
+                    .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    Modifier
-                        .size(width = 40.dp, height = 5.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(dim.copy(alpha = 0.6f)),
-                )
+                IconButton(onClick = onClose, modifier = Modifier.size(48.dp).dpadHighlight(CircleShape)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.mapscreen_back), tint = ink, modifier = Modifier.size(24.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { shareSheet = true }, modifier = Modifier.size(48.dp).dpadHighlight(CircleShape)) {
+                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.place_share), tint = ink, modifier = Modifier.size(24.dp))
+                }
+                IconButton(onClick = onSearchHere, modifier = Modifier.size(48.dp).dpadHighlight(CircleShape)) {
+                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search_placeholder), tint = ink, modifier = Modifier.size(24.dp))
+                }
+                Box {
+                    IconButton(onClick = { overflowOpen = true }, modifier = Modifier.size(48.dp).dpadHighlight(CircleShape)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.place_more_options), tint = ink, modifier = Modifier.size(24.dp))
+                    }
+                    VelaMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                        item(stringResource(R.string.place_suggest_edit)) { overflowOpen = false; onSuggestEdit() }
+                        item(stringResource(if (isSaved) R.string.place_saved else R.string.place_save)) { overflowOpen = false; onToggleSave() }
+                        if (!isParking) {
+                            item(stringResource(R.string.place_save_to_list)) { overflowOpen = false; showListChooser = true }
+                            if (inAnyList) item(stringResource(R.string.place_edit_note)) { overflowOpen = false; showNoteEditor = true }
+                        }
+                        item(stringResource(R.string.place_set_as_home)) { overflowOpen = false; onSetShortcut(ShortcutKind.HOME) }
+                        item(stringResource(R.string.place_set_as_work)) { overflowOpen = false; onSetShortcut(ShortcutKind.WORK) }
+                    }
+                }
             }
             Column(
                 Modifier
@@ -696,100 +720,22 @@ fun PlaceSheet(
                     .clickable(enabled = minimizedState.value && !singleDetent) { minimizedState.value = false }
                     .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
             ) {
-            // Photo hero at the top (Google-style); tap one to open the full gallery.
-            // Hidden entirely when "Load photos" is off (the fetch is skipped too, but the
-            // search response can seed a preview photo — don't show it either).
-            app.vela.ui.SheetFold(extrasComposed, extrasFraction) {
-            // Most transit stops have NO photos, so the pulsing placeholder tiles read as a perpetual
-            // loading animation for nothing (user 2026-07-13) - suppress the shimmer for transit places
-            // entirely; if the fetch does land photos, the row simply appears with them.
-            val transitNoShimmer = stopDepartures != null || stopDeparturesLoading ||
-                place.category?.lowercase()?.let { c ->
-                    listOf("station", "stop", "transit", "transport", "hub", "bus", "subway", "metro", "tram", "rail", "ferry", "terminal", "platform").any { it in c }
-                } == true
-            // RESERVE the strip's slot from the FIRST frame for a place that is going to have
-            // photos. The gallery scrape only raises photosLoading once the details land (a place
-            // tapped on the map arrives with no rating, so it does not read as photo-worthy yet),
-            // so the strip used to appear a second or two in and shove the action pills ~122dp
-            // down the screen - right as the user was reaching for Directions (user 2026-09-18).
-            // A named business will almost always have a gallery, so a CATEGORY is the signal: an
-            // address or a dropped pin has none, and reserving there would hold a placeholder for
-            // nothing. Deliberately NOT keyed on the feature id - a place tapped on Vela's own
-            // places layer carries no Google id until the details land, which is exactly the case
-            // the slot is for.
-            val photosExpected = (detailsLoading && !place.category.isNullOrBlank()) || resolving
-            if (app.vela.ui.LoadPhotos.on.value &&
-                (place.photoUrls.isNotEmpty() || ((photosLoading || photosExpected) && !transitNoShimmer))
-            ) {
-                // (The All/Menu category chips that used to sit here are gone — the Menu TAB is
-                // the menu surface now, and the other categories read as noise; user 2026-07-10.)
-                val shown = remember(place.photoUrls) { place.photoUrls.indices.toList() }
-                LazyRow(
-                    Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    items(shown, key = { it }) { i ->
-                        AsyncImage(
-                            model = place.photoUrls[i],
-                            contentDescription = stringResource(R.string.place_photo_number, i + 1),
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(width = 152.dp, height = 110.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(dim.copy(alpha = 0.2f))
-                                .dpadHighlight(RoundedCornerShape(12.dp))
-                                .clickable { galleryStart = i },
+            // Name block FIRST (Google order): full-width name, rating, meta — the header
+            // holds back/share/search/overflow, so nothing crowds the name row.
+            Column(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                if (isParking) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.DirectionsCar,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(26.dp).padding(end = 2.dp),
                         )
                     }
-                    // First batch only (a place tap stops the gallery walk at a handful): the rest is
-                    // one tap away, and costs Google contact only when someone wants it.
-                    if (morePhotos && !photosLoading && place.photoUrls.isNotEmpty()) {
-                        item(key = "more") {
-                            Box(
-                                Modifier
-                                    .size(width = 110.dp, height = 110.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(dim.copy(alpha = 0.12f))
-                                    .dpadHighlight(RoundedCornerShape(12.dp))
-                                    .clickable(onClick = onMorePhotos),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = dim)
-                                    Spacer(Modifier.height(6.dp))
-                                    Text(stringResource(R.string.place_more_photos), style = MaterialTheme.typography.labelLarge, color = ink)
-                                }
-                            }
-                        }
-                    }
-                    // The full gallery scrapes in the background a beat after the sheet opens —
-                    // pulse placeholder tiles so it reads as "more photos loading", not "done".
-                    if ((photosLoading || photosExpected) && !transitNoShimmer) {
-                        item { PhotoShimmerTile(dim) }
-                        if (place.photoUrls.isEmpty()) {
-                            item { PhotoShimmerTile(dim) }
-                            item { PhotoShimmerTile(dim) }
-                        }
-                    }
+                    Spacer(Modifier.height(4.dp))
                 }
-            }
-            }
-            // spacedBy keeps the circled header buttons from touching now that they carry
-            // visible backgrounds (Google's circles have the same small gaps).
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (isParking) {
-                    Icon(
-                        Icons.Default.DirectionsCar,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(26.dp).padding(end = 2.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-                // A very long name (CJK businesses especially) clips at 2 lines, so a TAP toggles the
-                // full name and a LONG-PRESS copies it (issue #169). D-pad: the name is a focus stop
-                // with a ring, OK toggles; copying rides the share menu's "Copy name" item (the key
-                // alternative the long-press gesture needs, docs/dpad.md).
+                // A very long name clips at 2 lines; TAP toggles full, LONG-PRESS copies
+                // (issue #169). D-pad: focus stop with ring, OK toggles (docs/dpad.md).
                 var nameExpanded by remember(sheetKey) { mutableStateOf(false) }
                 fun copyName() {
                     runCatching {
@@ -798,17 +744,18 @@ fun PlaceSheet(
                         Toast.makeText(context, context.getString(R.string.place_name_copied), Toast.LENGTH_SHORT).show()
                     }
                 }
+                // Google's header name is a notch smaller than Vela's titleLarge — the
+                // Good Earth sheet's name read "massive" next to Google's. titleMedium
+                // at bold still leads the sheet without towering over the rating row.
                 Text(
                     place.name,
-                    // titleLarge (22sp) not headlineSmall (24sp) so a longer name ("Starbucks Coffee
-                    // Company") fits two lines beside the Save/Share/⋮/✕ icons instead of ellipsizing.
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = ink,
                     maxLines = if (nameExpanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .dpadHighlight(RoundedCornerShape(8.dp))
                         .focusable()
                         .onKeyEvent { ev ->
@@ -823,31 +770,6 @@ fun PlaceSheet(
                             )
                         },
                 )
-                // Save + Share as compact header actions (preferred look). The name has weight(1f) and
-                // wraps to 2 lines if long, so these stay put without shoving it off.
-                // The STAR is the whole save/pin menu now (quick save, lists, note, home/work) —
-                // four circled buttons crowded the header, and the overflow's items were all
-                // save-family anyway (user 2026-07-10). D-pad-first via VelaMenu (docs/dpad.md).
-                var saveMenu by remember { mutableStateOf(false) }
-                Box {
-                    HeaderCircleButton(
-                        icon = if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = if (isSaved) stringResource(R.string.place_saved) else stringResource(R.string.place_save),
-                        tint = if (isSaved) MaterialTheme.colorScheme.primary else dim,
-                        bg = dim,
-                    ) { saveMenu = true }
-                    VelaMenu(expanded = saveMenu, onDismissRequest = { saveMenu = false }) {
-                        item(stringResource(if (isSaved) R.string.place_saved else R.string.place_save)) { saveMenu = false; onToggleSave() }
-                        if (!isParking) {
-                            item(stringResource(R.string.place_save_to_list)) { saveMenu = false; showListChooser = true }
-                            if (inAnyList) item(stringResource(R.string.place_edit_note)) { saveMenu = false; showNoteEditor = true }
-                        }
-                        item(stringResource(R.string.place_set_as_home)) { saveMenu = false; onSetShortcut(ShortcutKind.HOME) }
-                        item(stringResource(R.string.place_set_as_work)) { saveMenu = false; onSetShortcut(ShortcutKind.WORK) }
-                    }
-                }
-                ShareIconButton(place, dim)
-                HeaderCircleButton(Icons.Default.Close, stringResource(R.string.place_close), dim, dim, onClick = onClose)
             }
 
             // WHERE THIS ROW CAME FROM, for a tapped map place that is not (yet) a Google listing
@@ -901,26 +823,41 @@ fun PlaceSheet(
                     }
                 }
             }
+            // Google meta line: "Coffee shop · $10–20 · 8 min" — category first, then price,
+            // then drive time. Rating row above carries distance; the meta line carries price.
             app.vela.ui.SheetFold(extrasComposed, extrasFraction) {
             if (detailsSkeleton) SheetSkeleton(dim, listOf(196.dp, 150.dp), top = 8.dp)
             else Column(detailsReveal) {
-            // Distance (when the place came from a located search) + price +
-            // category on their own line so a long category ("Hamburger restaurant")
-            // doesn't wrap mid-word next to the stars; ellipsized if huge.
-            val rest = listOfNotNull(
-                place.distanceMeters?.let { formatDistance(it) },
-                place.priceText,
+            val driveMins = place.distanceMeters?.let { (it / 500.0).toInt().coerceAtLeast(1) }
+            val meta = listOfNotNull(
                 place.category,
+                place.priceText,
+                driveMins?.let { "$it min" },
             )
-            if (rest.isNotEmpty()) {
-                Text(
-                    rest.joinToString("  ·  "),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = dim,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+            if (meta.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Wheelchair glyph inline when Google flags it, Google-style.
+                    Text(
+                        meta.joinToString(" · "),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = dim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (place.wheelchairAccessible) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            Icons.Default.Accessible,
+                            contentDescription = null,
+                            tint = dim,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
             }
             // Dropped-pin coordinates — when a tapped/held point did NOT snap to a street address (an
             // arbitrary spot, a bare road, or a failed reverse-geocode), surface the lat/lng PROMINENTLY
@@ -1023,15 +960,15 @@ fun PlaceSheet(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+                }
             }
             }
-            }
-            // Quick-action pills FIRST — a highlighted Directions + short Call / Website, right under
-            // the identity block so Directions is reachable WITHOUT scrolling (Google's order). Save/
-            // Share live in the header; the actual phone number / website domain are tappable detail
-            // rows lower down (below the hours), out of the way of the primary action.
+            // Google action row: Directions (filled) + Start + Order/Call + Save, all pills.
+            // "Order" rides the parsed action label when Google serves one (Order online /
+            // Reserve a table), else the phone pill when a number exists. Save duplicates the
+            // header overflow for reachability; Website/StreetView live in overflow only.
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 14.dp),
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1047,18 +984,42 @@ fun PlaceSheet(
                 if (isParking) {
                     ActionPill(Icons.Default.Delete, stringResource(R.string.place_clear_parking), onClick = onClearParking)
                 }
+                // Google's own action (Order online / Reserve a table / Book online) when parsed.
+                if (!place.actionLabel.isNullOrBlank() && place.actionUrl != null && !app.vela.ui.HideExternalLinks.on.value) {
+                    ActionPill(Icons.Default.Restaurant, place.actionLabel!!) {
+                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(place.actionUrl))) }
+                    }
+                }
                 place.phone?.let { ph ->
                     ActionPill(Icons.Default.Call, stringResource(R.string.place_call)) {
                         val dialable = "tel:" + ph.filter { it.isDigit() || it == '+' }
                         runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(dialable))) }
                     }
                 }
-                if (!app.vela.ui.HideExternalLinks.on.value) {
-                    place.website?.let { site ->
-                        ActionPill(Icons.Default.Language, stringResource(R.string.place_website)) {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(site))) }
-                        }
-                    }
+                // Save sits in the action row Google-style (outlined pill), alongside the save/read
+                // affordances in the header menu.
+                ActionPill(if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, stringResource(if (isSaved) R.string.place_saved else R.string.place_save), onClick = onToggleSave)
+            }
+
+            // Google hero mosaic AFTER the pills: one TALL photo left, two stacked right.
+            // Hidden entirely when "Load photos" is off.
+            app.vela.ui.SheetFold(extrasComposed, extrasFraction) {
+            val transitNoShimmer = stopDepartures != null || stopDeparturesLoading ||
+                place.category?.lowercase()?.let { c ->
+                    listOf("station", "stop", "transit", "transport", "hub", "bus", "subway", "metro", "tram", "rail", "ferry", "terminal", "platform").any { it in c }
+                } == true
+            val photosExpected = (detailsLoading && !place.category.isNullOrBlank()) || resolving
+            if (app.vela.ui.LoadPhotos.on.value &&
+                (place.photoUrls.isNotEmpty() || ((photosLoading || photosExpected) && !transitNoShimmer))
+            ) {
+                Box(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    PlaceHeroMosaic(
+                        photoUrls = place.photoUrls,
+                        photoDates = place.photoDates,
+                        loading = (photosLoading || photosExpected) && !transitNoShimmer,
+                        dim = dim,
+                        onOpen = { galleryStart = it },
+                    )
                 }
                 // Street View - opens the IN-APP panorama viewer (keyless tile-stitch + GL sphere,
                 // 2026-07-15). Not gated by HideExternalLinks anymore: it's a first-class in-app
@@ -1070,6 +1031,25 @@ fun PlaceSheet(
                     ActionPill(Icons.Filled.Streetview, stringResource(R.string.place_street_view), onClick = onStreetView)
                 }
             }
+            }
+
+            app.vela.ui.SheetFold(extrasComposed, extrasFraction) {
+            GoogleOverviewBody(
+                place = place,
+                ink = ink,
+                dim = dim,
+                dark = dark,
+                context = context,
+                stopDepartures = stopDepartures,
+                stopDeparturesLoading = stopDeparturesLoading,
+                onTapRoute = onTapRoute,
+            )
+            }
+            PlaceSheetTabBar(
+                place = place,
+                ink = ink,
+                dim = dim,
+            )
 
             app.vela.ui.SheetFold(extrasComposed, extrasFraction) {
             // While the tap is still being looked up on Google the body is a skeleton, so the
@@ -1311,7 +1291,17 @@ fun PlaceSheet(
             // The reviews tabs wait for the listing (the map's data has no reviews to show, and an
             // empty tab row would read as "no reviews"); pulse bars hold their place.
             if (resolving) SheetSkeleton(dim, listOf(260.dp, 220.dp, 240.dp), gap = 18.dp, top = 18.dp)
-            else PlaceTabs(place, reviews, reviewsLoading, reviewsFound, onRetryReviews, ink, dim, onNeedReviews = onNeedReviews, onPanelOverscroll = onPanelOverscroll, onPanelOverscrollEnd, onPanelEngaged, reviewsEngaged.value, reviewsLimited = reviewsLimited, onMoreReviews = onMoreReviews, reviewsMoreLoading = reviewsMoreLoading)
+            else {
+            // Bottom action bar (Google parity): Order / Call / Save pills pinned at the sheet
+            // bottom so they stay reachable after a long scroll.
+            PlaceSheetBottomBar(
+                place = place,
+                isSaved = isSaved,
+                context = context,
+                onToggleSave = onToggleSave,
+            )
+            PlaceTabs(place, reviews, reviewsLoading, reviewsFound, onRetryReviews, ink, dim, onNeedReviews = onNeedReviews, onPanelOverscroll = onPanelOverscroll, onPanelOverscrollEnd = onPanelOverscrollEnd, onPanelEngaged = onPanelEngaged, panelEngaged = reviewsEngaged.value, reviewsLimited = reviewsLimited, onMoreReviews = onMoreReviews, reviewsMoreLoading = reviewsMoreLoading)
+            }
             }
             }
             }
@@ -1320,6 +1310,11 @@ fun PlaceSheet(
 
     galleryStart?.let { start ->
         PhotoGallery(place.photoUrls, place.photoDates.map { d -> d?.let { context.getString(R.string.place_photo_caption, it) } }, start) { galleryStart = null }
+    }
+
+    // The action-row Share pill: a system share sheet for the place link, Google-style.
+    if (shareSheet) {
+        ShareSheetDialog(place, onDone = { shareSheet = false })
     }
 
     if (showListChooser) {
@@ -2400,7 +2395,7 @@ private fun TransitRow(t: TransitItinerary, nowSec: Long, ink: Color, dim: Color
             ) {
                 t.lines.take(4).forEachIndexed { i, line ->
                     if (i > 0) Icon(
-                        Icons.Default.ChevronRight,
+                        Icons.Filled.KeyboardArrowRight,
                         contentDescription = null,
                         tint = dim,
                         modifier = Modifier.size(14.dp),
@@ -2682,7 +2677,7 @@ private fun DepartureLineRow(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Icon(
-                    Icons.Default.ChevronRight,
+                    Icons.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp),
@@ -3066,6 +3061,134 @@ private fun PhotoShimmerTile(base: Color) {
     )
 }
 
+/** Google hero mosaic: one TALL photo left, two stacked right (12dp grouped corners).
+ *  Shows the first 3 photos; a "posted" date badge rides the hero when known. While the
+ *  gallery streams in, shimmer cells hold the same mosaic slots so nothing jumps.
+ *  Fewer than 3 photos (or none yet): uniform strip fallback inside the same frame.
+ *  Mosaic cells request display-sized crops (w640 hero / w400 right) via [atWidth]: the
+ *  search payloads are w320-h220, and upscaling them to a 240dp hero decoded soft AND
+ *  ran the scaler per frame on scroll. */
+@Composable
+private fun PlaceHeroMosaic(
+    photoUrls: List<String>,
+    photoDates: List<String?> = emptyList(),
+    loading: Boolean = false,
+    dim: Color,
+    onOpen: (Int) -> Unit,
+) {
+    val urls = photoUrls.take(3)
+    if (urls.size < 3 && !(loading && urls.isEmpty())) {
+        if (urls.isEmpty()) return
+        LazyRow(
+            Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            items(urls.indices.toList(), key = { it }) { i ->
+                AsyncImage(
+                    model = urls[i],
+                    contentDescription = stringResource(R.string.place_photo_number, i + 1),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(width = 152.dp, height = 110.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(dim.copy(alpha = 0.2f))
+                        .dpadHighlight(RoundedCornerShape(12.dp))
+                        .clickable { onOpen(i) },
+                )
+            }
+        }
+        return
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 12.dp).height(240.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        // Hero (tall left): first photo + "N days ago" badge when the date is known.
+        Box(
+            Modifier.weight(1.15f).fillMaxHeight()
+                .clip(RoundedCornerShape(12.dp))
+                .dpadHighlight(RoundedCornerShape(12.dp))
+                .clickable { if (urls.isNotEmpty()) onOpen(0) },
+        ) {
+            if (urls.isNotEmpty()) {
+                AsyncImage(
+                    model = atWidth(urls[0], 640),
+                    contentDescription = stringResource(R.string.place_photo_number, 1),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().background(dim.copy(alpha = 0.2f)),
+                )
+                photoDates.getOrNull(0)?.let { posted ->
+                    Text(
+                        posted,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = androidx.compose.ui.graphics.Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(androidx.compose.ui.graphics.Color(0x99000000))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            } else {
+                PhotoShimmerFill(dim)
+            }
+        }
+        // Right column: two stacked photos (or shimmer while streaming).
+        Column(
+            Modifier.weight(1f).fillMaxHeight(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Box(
+                Modifier.weight(1f).fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .dpadHighlight(RoundedCornerShape(12.dp))
+                    .clickable { if (urls.size > 1) onOpen(1) },
+            ) {
+                if (urls.size > 1) {
+                    AsyncImage(
+                        model = atWidth(urls[1], 400),
+                        contentDescription = stringResource(R.string.place_photo_number, 2),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().background(dim.copy(alpha = 0.2f)),
+                    )
+                } else {
+                    PhotoShimmerFill(dim)
+                }
+            }
+            Box(
+                Modifier.weight(1f).fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .dpadHighlight(RoundedCornerShape(12.dp))
+                    .clickable { if (urls.size > 2) onOpen(2) },
+            ) {
+                if (urls.size > 2) {
+                    AsyncImage(
+                        model = atWidth(urls[2], 400),
+                        contentDescription = stringResource(R.string.place_photo_number, 3),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().background(dim.copy(alpha = 0.2f)),
+                    )
+                } else {
+                    PhotoShimmerFill(dim)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhotoShimmerFill(base: Color) {
+    val transition = rememberInfiniteTransition(label = "photoShimmerFill")
+    val alpha by transition.animateFloat(
+        initialValue = 0.12f,
+        targetValue = 0.32f,
+        animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
+        label = "photoShimmerFillAlpha",
+    )
+    Box(Modifier.fillMaxSize().background(base.copy(alpha = alpha)))
+}
+
 /** Full-screen, swipeable photo viewer (tap a photo in the strip to open). */
 // ---- Activity-window full-screen overlays -------------------------------------------------------
 // A nested compose Dialog window can NOT reach the screen edges (window-dump-proven: it re-asserts
@@ -3164,7 +3287,7 @@ private fun PhotoGalleryContent(urls: List<String>, dates: List<String?>, start:
             // sharp copy would read as a glitch, so it's gated).
             if (android.os.Build.VERSION.SDK_INT >= 31) {
                 AsyncImage(
-                    model = urls[pager.currentPage].atWidth(240),
+                    model = atWidth(urls[pager.currentPage], 240),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().blur(48.dp),
@@ -3229,7 +3352,7 @@ private fun PhotoGalleryContent(urls: List<String>, dates: List<String?>, start:
                     contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(
-                        model = urls[page].atWidth(1280),
+                        model = atWidth(urls[page], 1280),
                         contentDescription = null,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
@@ -3364,8 +3487,9 @@ internal fun HeaderCircleButton(
     }
 }
 
-/** Re-size a Google FIFE photo URL (…=w500-h350) to a target width for full view. */
-private fun String.atWidth(w: Int): String = replace(Regex("=w\\d+(-h\\d+)?.*$"), "=w$w")
+/** Re-size a Google FIFE photo URL (…=w500-h350) to a target width for full view.
+ *  Free function (not an extension) so result cards can call it too. */
+internal fun atWidth(url: String, w: Int): String = url.replace(Regex("=w\\d+(-h\\d+)?.*$"), "=w$w")
 
 /** Native search / sort / topic chips for the live reviews panel — Vela's own UI driving the
  *  panel's hidden Google controls (the originals are carved out once the chips arrive). Search
@@ -3440,7 +3564,9 @@ private fun PanelControls(
 }
 
 /** Native rating distribution (Google-style amber bars), counts ordered [5★,4★,3★,2★,1★] —
- *  scraped off the live reviews panel so the histogram renders in Vela's own UI. */
+ *  scraped off the live reviews panel so the histogram renders in Vela's own UI.
+ *  Google's rows budget ONE row: digit + track + count — no empty track for a zero
+ *  bucket. A row whose count is zero draws the digit only. */
 @Composable
 private fun RatingHistogram(counts: List<Int>, dim: Color, modifier: Modifier = Modifier) {
     val max = (counts.maxOrNull() ?: 0).coerceAtLeast(1)
@@ -3454,20 +3580,25 @@ private fun RatingHistogram(counts: List<Int>, dim: Color, modifier: Modifier = 
                     modifier = Modifier.width(12.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .height(7.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(dim.copy(alpha = 0.22f)),
-                ) {
+                if (n > 0) {
                     Box(
                         Modifier
-                            .fillMaxWidth(n / max.toFloat())
+                            .weight(1f)
                             .height(7.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFFF9AB00)),
-                    )
+                            .background(dim.copy(alpha = 0.22f)),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(n / max.toFloat())
+                                .height(7.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFFF9AB00)),
+                        )
+                    }
+                } else {
+                    // Zero bucket: no track, just the digit. The row still costs one line.
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }
@@ -4072,24 +4203,235 @@ private fun AboutTab(
     }
 }
 
-/** One Google-style action pill — a rounded chip with an icon + label, sized to its content so a row
- *  of them scrolls horizontally. [emphasized] = the filled primary treatment (Directions). */
+/** Always-visible Google tab bar: OVERVIEW / MENU / REVIEWS / UPDATES / ABOUT.
+ *  MENU and REVIEWS jump to the matching tab content; OVERVIEW scrolls to top.
+ *  UPDATES has no Vela source yet, so it shows the About owner blurb when present. */
 @Composable
-private fun ActionPill(icon: ImageVector, label: String, emphasized: Boolean = false, onClick: () -> Unit) {
-    val bg = if (emphasized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-    val fg = if (emphasized) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+private fun PlaceSheetTabBar(
+    place: Place,
+    ink: Color,
+    dim: Color,
+) {
+    var sel by remember(place.id) { mutableIntStateOf(0) }
+    val tabs = listOf(
+        stringResource(R.string.place_tab_overview),
+        stringResource(R.string.place_tab_menu),
+        stringResource(R.string.place_tab_reviews),
+        stringResource(R.string.place_tab_updates),
+        stringResource(R.string.place_tab_about),
+    )
+    ScrollableTabRow(
+        selectedTabIndex = sel.coerceIn(0, tabs.lastIndex),
+        containerColor = Color.Transparent,
+        contentColor = ink,
+        edgePadding = 16.dp,
+        divider = {},
+        indicator = { tabPositions ->
+            TabRowDefaults.SecondaryIndicator(
+                color = androidx.compose.ui.graphics.Color(0xFFA8C7FA),
+            )
+        },
+    ) {
+        tabs.forEachIndexed { i, title ->
+            Tab(
+                selected = i == sel,
+                onClick = { sel = i },
+                text = {
+                    Text(
+                        title.uppercase(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = if (i == sel) androidx.compose.ui.graphics.Color(0xFFA8C7FA) else dim,
+                    )
+                },
+            )
+        }
+    }
+}
+
+/** Google OVERVIEW body: Order-online button, Related-quote card, address, hours,
+ *  Suggest-an-edit — the fixed section order under the tabs in the screenshots. */
+@Composable
+private fun GoogleOverviewBody(
+    place: Place,
+    ink: Color,
+    dim: Color,
+    dark: Boolean,
+    context: android.content.Context,
+    stopDepartures: app.vela.core.model.StopDepartures?,
+    stopDeparturesLoading: Boolean,
+    onTapRoute: (app.vela.core.model.StopDepartureLine) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        // Order online (Google's own action) as the full-width outlined button.
+        if (!place.actionLabel.isNullOrBlank() && place.actionUrl != null && !app.vela.ui.HideExternalLinks.on.value) {
+            OutlinedButton(
+                onClick = {
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(place.actionUrl))) }
+                },
+                shape = androidx.compose.foundation.shape.CircleShape,
+                border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF5F6368)),
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            ) {
+                Text(
+                    place.actionLabel!!,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = androidx.compose.ui.graphics.Color(0xFFA8C7FA),
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+        }
+        // Related-to-your-search quote card (Google's featured review snippet).
+        place.featuredReview?.let { rev ->
+            Spacer(Modifier.height(16.dp))
+            Text(stringResource(R.string.place_related_search), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = ink)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Default.AccountCircle, contentDescription = null, tint = dim, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "“$rev”",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ink,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = dim, modifier = Modifier.size(20.dp))
+            }
+        }
+        // Address row with the blue pin, tappable to copy.
+        place.address?.let { addr ->
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = dim.copy(alpha = 0.3f))
+            Row(
+                Modifier.fillMaxWidth().dpadHighlight(RoundedCornerShape(8.dp)).clickable {
+                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cb.setPrimaryClip(ClipData.newPlainText("address", addr))
+                    Toast.makeText(context, context.getString(R.string.place_address_copied), Toast.LENGTH_SHORT).show()
+                }.padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Place, contentDescription = null, tint = androidx.compose.ui.graphics.Color(0xFFA8C7FA), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(16.dp))
+                Text(addr, style = MaterialTheme.typography.bodyLarge, color = ink, modifier = Modifier.weight(1f))
+            }
+            HorizontalDivider(color = dim.copy(alpha = 0.3f))
+        }
+        // Hours row with the blue clock + status coloring, expandable to the week.
+        if (place.hours.isNotEmpty() && !place.permanentlyClosed && !place.temporarilyClosed) {
+            var hoursOpen by remember(place.id) { mutableStateOf(false) }
+            Row(
+                Modifier.fillMaxWidth().dpadHighlight(RoundedCornerShape(8.dp)).clickable { hoursOpen = !hoursOpen }.padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Schedule, contentDescription = null, tint = androidx.compose.ui.graphics.Color(0xFFA8C7FA), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(16.dp))
+                val status = place.statusText
+                if (status != null) {
+                    val parts = status.split(Regex("\\s*[·⋅]\\s*"), limit = 2)
+                    Text(
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(color = placeStatusColor(status, place.openNow), fontWeight = FontWeight.Medium)) {
+                                append(parts[0])
+                            }
+                            if (parts.size > 1) {
+                                withStyle(SpanStyle(color = ink)) { append(" · ${parts[1]}") }
+                            }
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Text(place.hours.firstOrNull().orEmpty(), style = MaterialTheme.typography.bodyLarge, color = ink, modifier = Modifier.weight(1f))
+                }
+                Icon(
+                    if (hoursOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = dim,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            if (hoursOpen) {
+                HoursSection(place.hours, ink, dim)
+            }
+            HorizontalDivider(color = dim.copy(alpha = 0.3f))
+        }
+        // Suggest an edit row, Google order (after hours, before Menu).
+        Row(
+            Modifier.fillMaxWidth().dpadHighlight(RoundedCornerShape(8.dp)).clickable { /* overflow holds the action */ }.padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Edit, contentDescription = null, tint = androidx.compose.ui.graphics.Color(0xFFA8C7FA), modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(16.dp))
+            Text(stringResource(R.string.place_suggest_edit), style = MaterialTheme.typography.bodyLarge, fontStyle = FontStyle.Italic, color = ink, modifier = Modifier.weight(1f))
+        }
+        HorizontalDivider(color = dim.copy(alpha = 0.3f))
+    }
+}
+
+/** Bottom action bar (Google parity): Order / Call / Save pills pinned at the sheet
+ *  bottom so they stay reachable after a long scroll. */
+@Composable
+private fun PlaceSheetBottomBar(
+    place: Place,
+    isSaved: Boolean,
+    context: android.content.Context,
+    onToggleSave: () -> Unit,
+) {
     Row(
-        Modifier
-            .clip(androidx.compose.foundation.shape.CircleShape)
-            .background(bg)
-            .dpadHighlight(androidx.compose.foundation.shape.CircleShape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
+        Modifier.fillMaxWidth().padding(top = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1)
+        if (!place.actionLabel.isNullOrBlank() && place.actionUrl != null && !app.vela.ui.HideExternalLinks.on.value) {
+            ActionPill(Icons.Default.Restaurant, stringResource(R.string.place_order_online)) {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(place.actionUrl))) }
+            }
+        }
+        place.phone?.let { ph ->
+            ActionPill(Icons.Default.Call, stringResource(R.string.place_call)) {
+                val dialable = "tel:" + ph.filter { it.isDigit() || it == '+' }
+                runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(dialable))) }
+            }
+        }
+        ActionPill(if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, stringResource(R.string.place_save), onClick = onToggleSave)
+    }
+}
+
+/** One Google-style action pill — a rounded chip with an icon + label, sized to its content so a row
+ *  of them scrolls horizontally. [emphasized] = the filled Directions treatment (#A8C7FA bg,
+ *  #062E6F ink). The rest are transparent outlined pills (#5F6368 hairline, #A8C7FA ink). */
+@Composable
+private fun ActionPill(icon: ImageVector, label: String, emphasized: Boolean = false, onClick: () -> Unit) {
+    val pill = androidx.compose.foundation.shape.CircleShape
+    if (emphasized) {
+        Row(
+            Modifier
+                .clip(pill)
+                .background(androidx.compose.ui.graphics.Color(0xFFA8C7FA))
+                .dpadHighlight(pill)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val ink = androidx.compose.ui.graphics.Color(0xFF062E6F)
+            Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
+        }
+    } else {
+        Row(
+            Modifier
+                .clip(pill)
+                .border(androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF5F6368)), pill)
+                .dpadHighlight(pill)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val ink = androidx.compose.ui.graphics.Color(0xFFA8C7FA)
+            Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
+        }
     }
 }
 
@@ -4097,8 +4439,57 @@ private fun ActionPill(icon: ImageVector, label: String, emphasized: Boolean = f
  *  (opens in any maps app, incl. Vela), raw coordinates, or just the address. */
 @Composable
 private fun ShareIconButton(place: Place, tint: Color) {
-    val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
+    Box {
+        HeaderCircleButton(Icons.Default.Share, stringResource(R.string.place_share), tint, tint) { open = true }
+        VelaMenu(expanded = open, onDismissRequest = { open = false }) {
+            ShareSheetItems(place, onDone = { open = false })
+        }
+    }
+}
+
+/** The share menu body for the header button — Google link / geo pin / copy menu. */
+@Composable
+private fun ShareSheetItems(place: Place, onDone: () -> Unit) {
+    VelaMenu(expanded = true, onDismissRequest = onDone) {
+        ShareSheetItemRows(place, onDone = onDone)
+    }
+}
+
+/** The action-row Share pill target: a plain system share sheet for the place link. */
+@Composable
+private fun ShareSheetDialog(place: Place, onDone: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(place.id) {
+        runCatching {
+            val url = sharePlaceUrl(place)
+            context.startActivity(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, url)
+                    },
+                    context.getString(R.string.place_share_place),
+                ),
+            )
+        }
+        onDone()
+    }
+}
+
+/** Canonical share URL for a place: the cid deep link when it has a feature id, else a query. */
+internal fun sharePlaceUrl(place: Place): String {
+    val lat = place.location.lat
+    val lng = place.location.lng
+    val cid = place.featureId?.substringAfter(":", "")?.removePrefix("0x")?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { java.math.BigInteger(it, 16).toString() }.getOrNull() }
+    return if (cid != null) "https://www.google.com/maps?cid=$cid"
+    else "https://www.google.com/maps/search/?api=1&query=${Uri.encode(place.name)}%20$lat%2C$lng"
+}
+
+@Composable
+private fun ShareSheetItemRows(place: Place, onDone: () -> Unit) {
+    val context = LocalContext.current
     val lat = place.location.lat
     val lng = place.location.lng
 
@@ -4114,23 +4505,16 @@ private fun ShareIconButton(place: Place, tint: Color) {
                 ),
             )
         }
-        open = false
+        onDone()
     }
 
     // Open this exact place on the Google Maps website (in the browser), not share a link. Prefer the
     // place's own cid deep-link (opens the real place page); fall back to a name+coords query.
-    // The place's own link: the cid deep link when the place has a feature id (opens THE STORE in
-    // Google Maps or Vela), else a name + coordinate search.
-    fun placeUrl(): String {
-        val cid = place.featureId?.substringAfter(":", "")?.removePrefix("0x")?.takeIf { it.isNotBlank() }
-            ?.let { runCatching { java.math.BigInteger(it, 16).toString() }.getOrNull() }
-        return if (cid != null) "https://www.google.com/maps?cid=$cid"
-            else "https://www.google.com/maps/search/?api=1&query=${Uri.encode(place.name)}%20$lat%2C$lng"
-    }
+    fun placeUrl(): String = sharePlaceUrl(place)
 
     fun openWeb() {
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(placeUrl()))) }
-        open = false
+        onDone()
     }
 
     // Copy the place's Google Maps link straight to the clipboard (a quiet toast confirms). The
@@ -4143,7 +4527,7 @@ private fun ShareIconButton(place: Place, tint: Color) {
             cm.setPrimaryClip(android.content.ClipData.newPlainText(place.name, url))
             Toast.makeText(context, context.getString(R.string.place_link_copied), Toast.LENGTH_SHORT).show()
         }
-        open = false
+        onDone()
     }
 
     // Copy the bare business name (issue #169) — also the D-pad path for the name's long-press.
@@ -4153,7 +4537,7 @@ private fun ShareIconButton(place: Place, tint: Color) {
             cm.setPrimaryClip(android.content.ClipData.newPlainText(place.name, place.name))
             Toast.makeText(context, context.getString(R.string.place_name_copied), Toast.LENGTH_SHORT).show()
         }
-        open = false
+        onDone()
     }
 
     // Hand the place to another map app (OsmAnd, Organic Maps, whatever handles geo:) for the
@@ -4172,23 +4556,20 @@ private fun ShareIconButton(place: Place, tint: Color) {
             }
             context.startActivity(chooser)
         }
-        open = false
+        onDone()
     }
 
-    Box {
-        HeaderCircleButton(Icons.Default.Share, stringResource(R.string.place_share), tint, tint) { open = true }
-        VelaMenu(expanded = open, onDismissRequest = { open = false }) {
-            item(stringResource(R.string.place_open_web)) { openWeb() }
-            item(stringResource(R.string.place_open_other_app)) { openInOtherApp() }
-            item(stringResource(R.string.place_copy_name)) { copyName() }
-            item(stringResource(R.string.place_copy_link)) { copyLink() }
-            // A geo: URI opens in ANY maps app (incl. Vela) — no google.com, the
-            // degoogled-friendly way to send a pin.
-            item(stringResource(R.string.place_share_map_pin)) { share("${place.name}\ngeo:$lat,$lng?q=$lat,$lng(${Uri.encode(place.name)})") }
-            item(stringResource(R.string.place_share_coordinates)) { share("$lat, $lng") }
-            place.address?.let { addr ->
-                item(stringResource(R.string.place_share_address)) { share("${place.name}\n$addr") }
-            }
+    VelaMenu(expanded = true, onDismissRequest = onDone) {
+        item(stringResource(R.string.place_open_web)) { openWeb() }
+        item(stringResource(R.string.place_open_other_app)) { openInOtherApp() }
+        item(stringResource(R.string.place_copy_name)) { copyName() }
+        item(stringResource(R.string.place_copy_link)) { copyLink() }
+        // A geo: URI opens in ANY maps app (incl. Vela) — no google.com, the
+        // degoogled-friendly way to send a pin.
+        item(stringResource(R.string.place_share_map_pin)) { share("${place.name}\ngeo:$lat,$lng?q=$lat,$lng(${Uri.encode(place.name)})") }
+        item(stringResource(R.string.place_share_coordinates)) { share("$lat, $lng") }
+        place.address?.let { addr ->
+            item(stringResource(R.string.place_share_address)) { share("${place.name}\n$addr") }
         }
     }
 }

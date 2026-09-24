@@ -155,6 +155,40 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Low-power navigation overlay: pitch-black turn screen over the lock
+             screen while navigating (the Pixel Maps power-saving idea, built in).
+             The MinMode alias answers Essentials' exact component
+             (com.google.android.apps.maps/com.google.android.apps.gmm.features.minmode.MinModeActivity),
+             which only exists in NEW Google Maps — the user's Maps 11.126 predates it, so Vela
+             serves it instead and Essentials works unmodified. Exported: Essentials (or adb)
+             fires it from outside the app, but it only renders mid-navigation with the toggle on. -->
+        <activity
+            android:name=".ui.LowPowerActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:showOnLockScreen="true"
+            android:theme="@style/Theme.Vela" />
+        <!-- Concrete target for the MinMode alias below: transparent, forwards to
+             LowPowerActivity and finishes. A separate class (not the alias pointing
+             straight at LowPowerActivity) so the alias's extras-free intent gets the
+             snapshot fallback in one place. NOTE: this activity must stay exported —
+             Essentials fires it from outside via `am start -n ...MinModeActivity`,
+             which resolves through the alias below to this target. -->
+        <activity
+            android:name=".ui.MinModeAliasActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="com.google.android.apps.maps.minmode.SHOW" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name="com.google.android.apps.gmm.features.minmode.MinModeActivity"
+            android:targetActivity=".ui.MinModeAliasActivity"
+            android:exported="true" />
+
         <!-- Refcounted keeper that holds the process foreground-important while any long
              download (voice model, region graph, place pack, update APK) is in flight, so
              backgrounding or swiping the app away no longer kills it (issue #212). -->

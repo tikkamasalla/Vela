@@ -276,12 +276,14 @@ object SearchParser {
      *  **duplicated**, so we de-dup. Big/landmark places additionally carry a small
      *  "gallery preview" at `[1][204][0]` (URL leaf `[1][2][0][0]`); we fold those in where
      *  present. The full gallery (~30+) is **login-gated** now (see [PhotosParser]) — this is
-     *  the most photos available keyless. De-dup by the re-sized URL so the hero never repeats. */
+     *  the most photos available keyless. De-dup by the re-sized URL so the hero never repeats.
+     *  Result rows render at ~110dp tall, so request small crops (w320) — the old w500-h350
+     *  payloads decoded ~3x the pixels the list ever shows (scroll jank, user report). */
     private fun parsePhotos(entry: JsonElement, paths: Map<String, List<Int>>): List<String> {
         val urls = LinkedHashSet<String>()
         fun add(u: String?) {
             if (u != null && u.contains("googleusercontent"))
-                urls += u.replace(Regex("=w\\d+-h\\d+.*$"), "=w500-h350")
+                urls += u.replace(Regex("=w\\d+-h\\d+.*$"), "=w320-h220")
         }
         entry.atPath(pathOf(paths, "photos")).arr()?.forEach { add(it.at(6, 0).str()) }
         entry.at(1, 204, 0).arr()?.forEach { add(it.at(1, 2, 0, 0).str()) }
