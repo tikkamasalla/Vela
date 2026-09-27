@@ -170,6 +170,7 @@ import app.vela.ui.item
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.DisposableEffect
@@ -569,6 +570,38 @@ fun PlaceSheet(
     // engagement signal, cleared when they drag back toward the sheet top. Hides the native
     // histogram so the panel gets the height.
     val reviewsEngaged = remember(sheetKey) { mutableStateOf(false) }
+    // Top strip IS the tab bar now: one shared selection for the strip and the
+    // content below. The strip uses FIXED indices (Overview=0, Reviews=1, About=2);
+    // the content below carries Reviews+About only, so the call site maps strip→content.
+    var stripSel by remember(place.id, sheetKey) { mutableIntStateOf(0) }
+    var tabsTopPx by remember(place.id) { mutableStateOf(0f) }
+    fun contentCount(): Int {
+        val menu = hasMenuPhotos(place) && app.vela.ui.LoadPhotos.on.value
+        val rev = place.rating != null || reviews.isNotEmpty() || place.featuredReview != null
+        val about = place.about.isNotEmpty() || place.editorialSummary != null || place.ownerDescription != null
+        return (if (rev) 1 else 0) + (if (menu) 1 else 0) + (if (about) 1 else 0)
+    }
+    /** Strip index → content index (About alone collapses to 0). */
+    fun stripToContent(s: Int): Int = when (s) {
+        1 -> 0
+        2 -> (contentCount() - 1).coerceAtLeast(0)
+        else -> 0
+    }
+    /** Content index → strip index (content 0 = Reviews, last = About when 2+). */
+    fun contentToStrip(c: Int): Int {
+        if (contentCount() <= 1) return if (c == 0) 1 else 0
+        return if (c == 0) 1 else 2
+    }
+    fun jumpToTab(key: String) {
+        if (key == "Overview") {
+            stripSel = 0
+            scope.launch { bodyScroll.animateScrollTo(0) }
+            return
+        }
+        stripSel = if (key == "About") 2 else 1
+        onOpenTabConsumed()
+        scope.launch { bodyScroll.animateScrollTo(tabsTopPx.roundToInt()) }
+    }
     val onPanelOverscroll: (Float) -> Unit = { dy ->
         val consumed = bodyScroll.dispatchRawDelta(-dy)
         val leftover = -dy - consumed
@@ -1044,6 +1077,8 @@ fun PlaceSheet(
                 place = place,
                 ink = ink,
                 dim = dim,
+                selected = stripSel,
+                onPickTab = ::jumpToTab,
             )
 
             app.vela.ui.SheetFold(extrasComposed, extrasFraction) {
@@ -1273,7 +1308,7 @@ fun PlaceSheet(
                 context = context,
                 onToggleSave = onToggleSave,
             )
-            PlaceTabs(place, reviews, reviewsLoading, reviewsFound, onRetryReviews, ink, dim, onNeedReviews = onNeedReviews, onPanelOverscroll = onPanelOverscroll, onPanelOverscrollEnd = onPanelOverscrollEnd, onPanelEngaged = onPanelEngaged, panelEngaged = reviewsEngaged.value, reviewsLimited = reviewsLimited, onMoreReviews = onMoreReviews, reviewsMoreLoading = reviewsMoreLoading, openTab = openTab, onOpenTabConsumed = onOpenTabConsumed)
+            PlaceTabs(place, reviews, reviewsLoading, reviewsFound, onRetryReviews, ink, dim, onNeedReviews = onNeedReviews, onPanelOverscroll = onPanelOverscroll, onPanelOverscrollEnd = onPanelOverscrollEnd, onPanelEngaged = onPanelEngaged, panelEngaged = reviewsEngaged.value, reviewsLimited = reviewsLimited, onMoreReviews = onMoreReviews, reviewsMoreLoading = reviewsMoreLoading, openTab = openTab, onOpenTabConsumed = onOpenTabConsumed, selectedTab = stripToContent(stripSel), onTabSelected = { stripSel = contentToStrip(it) }, onTabsMeasured = { tabsTopPx = it })
             }
             }
             }
@@ -3605,7 +3640,25 @@ private fun PlaceTabs(
     reviewsMoreLoading: Boolean = false,
     openTab: String? = null,
     onOpenTabConsumed: () -> Unit = {},
+    // The top strip OWNS the selection (single source of truth, shared with the
+    // strip so there is exactly one tab bar and one content area).
+    selectedTab: Int = 0,
+    onTabSelected: (Int) -> Unit = {},
+    onTabsMeasured: (Float) -> Unit = {},
 ) {
+    // A deep tab from OUTSIDE (results' Menu button): select it once through the
+    // shared slot, then hand control back so a later manual pick sticks.
+    androidx.compose.runtime.LaunchedEffect(place.id, openTab) {
+        if (openTab != null) {
+            onTabSelected(when (openTab) {
+                "Reviews" -> 1
+                "About" -> 2
+                else -> 0
+            })
+            onOpenTabConsumed()
+        }
+        Unit
+    }
     // A BARE bus stop (transit-category AND no rating, i.e. no real review content) shows only its
     // departure board + stop timeline - Reviews/About are noise there. But a RATED transit CENTER
     // (a real building people review) keeps both tabs: gate on the bare-stop signal, NOT category
@@ -3639,45 +3692,27 @@ private fun PlaceTabs(
         if (menuIndices.isNotEmpty() && app.vela.ui.LoadPhotos.on.value) add("Menu")
         if (hasAbout) add("About")
     }
-    if (tabs.isEmpty()) return
-    var sel by remember(place.id) { mutableIntStateOf(0) }
-    val selected = sel.coerceIn(0, tabs.lastIndex)
-    // Deep tab (results' Menu button): jump once, then hand control back so a
-    // later manual pick sticks.
-    androidx.compose.runtime.LaunchedEffect(place.id, openTab) {
-        openTab?.let { want ->
-            val idx = tabs.indexOf(want)
-            if (idx >= 0) {
-                sel = idx
-                onOpenTabConsumed()
-            }
-        }
+    if (tabs.isEmpty()) {
+        // Tabs come and go with the fetch (reviews land late): keep the shared slot
+        // valid so the strip can't point past the end. No callback storm: only when stale.
+        if (selectedTab != 0) onTabSelected(0)
+        return
+    }
+    val selected = selectedTab.coerceIn(0, tabs.lastIndex)
+    if (selected != selectedTab) onTabSelected(selected)
+    // Manual picks write back to the shared slot, so the top strip follows.
+    fun pick(i: Int) {
+        onTabSelected(i.coerceIn(0, tabs.lastIndex))
+        onOpenTabConsumed()
     }
 
-    Column(Modifier.padding(top = 12.dp)) {
-        // In engaged reviews mode the panel takes the WHOLE sheet — no floating tab bar above
-        // it (it returns when the user walks the sheet back up and disengages).
-        if (!panelEngaged) {
-            TabRow(
-                selectedTabIndex = selected,
-                containerColor = Color.Transparent,
-                contentColor = ink,
-            ) {
-                tabs.forEachIndexed { i, title ->
-                    // The list carries LOGIC KEYS ("Reviews"/"Menu"/"About" branch the `when`
-                    // below); the visible label localizes separately - the last of the
-                    // dual-purpose literals split from their keys (i18n follow-ups, 2026-07-14).
-                    // The Menu tab still prefers Google's own (already localized) gallery-tab name.
-                    val display = when (title) {
-                        "Reviews" -> stringResource(R.string.place_tab_reviews)
-                        "Menu" -> menuTabName ?: stringResource(R.string.place_tab_menu)
-                        "About" -> stringResource(R.string.place_tab_about)
-                        else -> title
-                    }
-                    Tab(selected = i == selected, onClick = { sel = i }, text = { Text(display) })
-                }
-            }
-        }
+    Column(
+        Modifier
+            .padding(top = 12.dp)
+            .onGloballyPositioned { c -> onTabsMeasured(c.positionInParent().y) },
+    ) {
+        // No tab bar here anymore: the top strip IS the tab bar (single source of
+        // truth). The content below is the tabs' bodies only.
         Column(Modifier.padding(top = 10.dp)) {
             when (tabs[selected]) {
                 "Reviews" -> {
@@ -4199,30 +4234,29 @@ private fun AboutTab(
  *  MENU and REVIEWS jump to the matching tab content; OVERVIEW scrolls to top.
  *  UPDATES has no Vela source yet, so it shows the About owner blurb when present. */
 @Composable
+/** Google tab strip: OVERVIEW / REVIEWS / ABOUT (Menu is gone — text menus aren't
+ *  parsed). Single selection source of truth, shared with the content below:
+ *  [selected] in, [onPickTab] out ("Overview" scrolls to top, the rest select). */
 private fun PlaceSheetTabBar(
     place: Place,
     ink: Color,
     dim: Color,
+    selected: Int = 0,
+    onPickTab: (String) -> Unit = {},
 ) {
-    var sel by remember(place.id) { mutableIntStateOf(0) }
     val tabs = listOf(
-        stringResource(R.string.place_tab_overview),
-        stringResource(R.string.place_tab_menu),
-        stringResource(R.string.place_tab_reviews),
-        stringResource(R.string.place_tab_updates),
-        stringResource(R.string.place_tab_about),
+        stringResource(R.string.place_tab_overview) to "Overview",
+        stringResource(R.string.place_tab_reviews) to "Reviews",
+        stringResource(R.string.place_tab_about) to "About",
     )
-    // Plain strip, not M3 ScrollableTabRow: the M3 container measured 3x height and
-    // swallowed both its container color and the tab labels on-device (the blue
-    // ribbon). Labels + a thin selected underline is all Google draws here.
     Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
     ) {
-        tabs.forEachIndexed { i, title ->
+        tabs.forEachIndexed { i, (title, key) ->
             Column(
                 modifier = Modifier
                     .dpadHighlight(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .clickable { sel = i }
+                    .clickable { onPickTab(key) }
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -4230,7 +4264,7 @@ private fun PlaceSheetTabBar(
                     title.uppercase(),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium,
-                    color = if (i == sel) androidx.compose.ui.graphics.Color(0xFFA8C7FA) else dim,
+                    color = if (i == selected) androidx.compose.ui.graphics.Color(0xFFA8C7FA) else dim,
                 )
                 Spacer(Modifier.height(4.dp))
                 androidx.compose.foundation.layout.Box(
@@ -4238,7 +4272,7 @@ private fun PlaceSheetTabBar(
                         .width(28.dp)
                         .height(3.dp)
                         .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
-                        .background(if (i == sel) androidx.compose.ui.graphics.Color(0xFFA8C7FA) else androidx.compose.ui.graphics.Color.Transparent),
+                        .background(if (i == selected) androidx.compose.ui.graphics.Color(0xFFA8C7FA) else androidx.compose.ui.graphics.Color.Transparent),
                 )
             }
         }
@@ -4900,7 +4934,11 @@ private fun HoursSection(
         AnimatedVisibility(expanded) {
             Column {
                 Column(Modifier.padding(start = 26.dp, top = 2.dp, bottom = 2.dp)) {
+                    // Holiday suffixes ("10 a.m.–10 p.m. · Truth and Reconciliation") live on
+                    // the DAY's own line — never as a free-floating paragraph between rows,
+                    // which is what left the big dead gap on uneven-holiday listings.
                     days.forEachIndexed { i, dt ->
+                        val parts = dt[1].split("·").map { it.trim() }.filter { it.isNotEmpty() }
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                             Text(
                                 dt[0],
@@ -4910,10 +4948,18 @@ private fun HoursSection(
                                 fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal,
                             )
                             Text(
-                                dt[1],
+                                parts.firstOrNull().orEmpty(),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = if (i == 0) ink else dim,
                                 fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                        parts.drop(1).forEach { extra ->
+                            Text(
+                                extra,
+                                modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = dim,
                             )
                         }
                     }
