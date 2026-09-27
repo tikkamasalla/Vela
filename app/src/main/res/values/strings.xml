@@ -86,6 +86,7 @@
     <string name="map_region_places_downloading">Saving %1$s places for offline search · %2$d%%</string> <!-- format -->
     <string name="map_region_placesfile_downloading">Saving %1$s places for the map · %2$d%%</string> <!-- format -->
     <string name="map_region_map_downloading">Downloading the %1$s map · %2$d%%</string> <!-- format -->
+    <string name="map_region_satellite_downloading">Downloading %1$s satellite imagery · %2$d%%</string> <!-- format -->
     <string name="mapvm_region_ready">%1$s is downloaded: map, routes and places work offline</string> <!-- format -->
     <string name="mapvm_region_incomplete">%1$s is only partly downloaded. Connect and tap Update in Settings, Offline maps to finish it</string> <!-- format -->
     <string name="mapvm_poipack_ready">Places in %1$s are now searchable offline</string> <!-- format -->

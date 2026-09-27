@@ -157,6 +157,81 @@ object OfflineMaps {
         )
     }
 
+    /** Satellite imagery as its own region: a minimal inline style (no fetch — the
+     *  Esri raster source is constant), so province-scale downloads don't depend on
+     *  the live style. Same observer grammar as [download]. */
+    fun downloadSatellite(
+        context: Context,
+        s: Double,
+        w: Double,
+        n: Double,
+        e: Double,
+        minZoom: Double,
+        maxZoom: Double,
+        name: String,
+        onCreated: (OfflineRegion) -> Unit = {},
+        onProgress: (Int) -> Unit = {},
+        onDone: (DoneReason) -> Unit,
+    ) {
+        val style = JSONObject()
+            .put("version", 8)
+            .put("sources", JSONObject().put(
+                "vela-sat-offline",
+                JSONObject()
+                    .put("type", "raster")
+                    .put("tiles", org.json.JSONArray().put(ESRI_TILES))
+                    .put("tileSize", 256),
+            ))
+            .put("layers", org.json.JSONArray().put(
+                JSONObject()
+                    .put("id", "vela-sat-offline")
+                    .put("type", "raster")
+                    .put("source", "vela-sat-offline"),
+            ))
+            .toString()
+        val f = java.io.File(context.cacheDir, "offline-style-sat.json")
+        f.writeText(style)
+        create(
+            context, "file://" + f.absolutePath,
+            LatLngBounds.from(n, e, s, w), minZoom, maxZoom, name,
+            onCreated, onProgress, onDone,
+        )
+    }
+
+    /** Suspending form of [downloadSatellite] for the region-download chain. */
+    suspend fun downloadSatelliteAwait(
+        context: Context,
+        s: Double,
+        w: Double,
+        n: Double,
+        e: Double,
+        minZoom: Double,
+        maxZoom: Double,
+        name: String,
+        onProgress: (Int) -> Unit = {},
+        isActive: () -> Boolean = { true },
+    ): Boolean = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        var region: OfflineRegion? = null
+        downloadSatellite(
+            context, s, w, n, e, minZoom, maxZoom, name,
+            onCreated = { region = it },
+            onProgress = onProgress,
+            onDone = { reason ->
+                if (cont.isActive) cont.resume(reason == DoneReason.SAVED, null)
+            },
+        )
+        cont.invokeOnCancellation {
+            region?.let { r ->
+                r.setDownloadState(OfflineRegion.STATE_INACTIVE)
+                r.delete(object : OfflineRegion.OfflineRegionDeleteCallback {
+                    override fun onDelete() {}
+                    override fun onError(message: String) {}
+                })
+            }
+        }
+        Unit
+    }
+
     fun list(context: Context, onResult: (List<OfflineRegion>) -> Unit) {
         OfflineManager.getInstance(context).listOfflineRegions(
             object : OfflineManager.ListOfflineRegionsCallback {

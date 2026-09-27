@@ -5278,6 +5278,7 @@ private fun RegionDownloadCard(name: String, places: Boolean, pct: Int, area: Bo
                         places -> stringResource(R.string.map_region_places_downloading, name, pct)
                         fileStep == 1 -> stringResource(R.string.map_region_placesfile_downloading, name, pct)
                         fileStep == 2 -> stringResource(R.string.map_region_map_downloading, name, pct)
+                        fileStep == 3 -> stringResource(R.string.map_region_satellite_downloading, name, pct)
                         else -> stringResource(R.string.map_region_downloading, name, pct)
                     },
                     fontWeight = FontWeight.SemiBold,

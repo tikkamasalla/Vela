@@ -7618,10 +7618,14 @@ class MapViewModel @Inject constructor(
                     ensureWorldBasemap()
                     refreshBasemapArchive()
                 }
+                // Satellite imagery for the region (when its layer is on): hi-def where the
+                // tile budget allows (z16 street detail for city regions), stepping down for
+                // province-scale boxes. Skipped silently when off.
+                val satOk = !regionCancel.get() && downloadSatelliteForRegion(region)
                 _state.update { it.copy(regionDownloadName = null, regionFileStep = null) }
                 if (!regionCancel.get()) {
                     showStatus(
-                        if (packOk && placesOk && mapOk) appContext.getString(R.string.mapvm_region_ready, region.name)
+                        if (packOk && placesOk && mapOk && satOk) appContext.getString(R.string.mapvm_region_ready, region.name)
                         else appContext.getString(R.string.mapvm_region_incomplete, region.name),
                     )
                 }
@@ -7630,6 +7634,30 @@ class MapViewModel @Inject constructor(
             // A "download all" batch continues with the next piece (the queue is empty otherwise).
             startNextQueuedRegion()
         }
+    }
+
+    /** Satellite imagery for a downloaded region (its own tile region, independently
+     *  deletable, named "<region> satellite"). Zooms adapt to the box: street-level z16
+     *  where the tile budget allows (city regions), stepping down to z12 for
+     *  province-scale boxes — a full z16 Alberta would be hundreds of thousands of
+     *  tiles. Skipped (success) when the satellite layer is off. */
+    private suspend fun downloadSatelliteForRegion(region: app.vela.offline.RoutingRegion): Boolean {
+        if (!app.vela.ui.SatelliteLayer.on.value) return true
+        var maxZ = 12
+        var bill = 0L
+        for (z in 10..16) {
+            bill += tileCount(region.s, region.w, region.n, region.e, z)
+            if (bill <= 40_000L) maxZ = z
+        }
+        _state.update { it.copy(regionFileStep = 3, regionFilePct = 0, regionDownloadName = it.regionDownloadName ?: region.name) }
+        val ok = app.vela.offline.OfflineMaps.downloadSatelliteAwait(
+            appContext, region.s, region.w, region.n, region.e, 10.0, maxZ.toDouble(),
+            region.name + " satellite",
+            onProgress = { pct -> _state.update { it.copy(regionFileStep = 3, regionFilePct = pct) } },
+            isActive = { !regionCancel.get() },
+        )
+        _state.update { it.copy(regionFileStep = null) }
+        return ok
     }
 
     /** Pull [region]'s offline place pack (best-effort — regions without a pack just skip). The pack
