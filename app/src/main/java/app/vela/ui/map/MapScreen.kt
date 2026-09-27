@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.PublicOff
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material.icons.filled.Hotel
@@ -494,6 +495,8 @@ fun MapScreen(
     var filteredResultIds by remember { mutableStateOf<Set<String>?>(null) }
     // True while the place sheet sits at its EXPANDED detent (covers the search bar).
     var placeSheetExpanded by remember { mutableStateOf(false) }
+    // Deep tab request for the sheet (results' Menu button). Consumed once by PlaceTabs.
+    var sheetTab by remember { mutableStateOf<String?>(null) }
     // The sheet's live TOP edge in root px (0 = not measured). The layers button keys its
     // visibility off this: shown while a POI is minimized whenever the button's own corner
     // actually clears the sheet - a measured overlap test, not an orientation/height guess,
@@ -1350,7 +1353,7 @@ fun MapScreen(
                         },
                     ),
             ) {
-                Column(Modifier.statusBarsPadding().padding(top = 0.dp, start = 0.dp, end = 0.dp, bottom = 12.dp)) {
+                Column(Modifier.statusBarsPadding().padding(12.dp)) {
                     // Landscape bare-map chrome collapses to one line (bar | chips) below. NB the
                     // condition must NOT include !searchOpen: focusing the bar flips searchOpen,
                     // and if that moved the SearchBar to a different subtree the remount blurred
@@ -1486,7 +1489,7 @@ fun MapScreen(
                         // beside the bar above).
                         !landscapeOneLine && state.selected == null && state.results.isEmpty() -> CategoryChips(
                             onPick = vm::quickSearch,
-                            modifier = Modifier.padding(top = 8.dp, start = 12.dp, end = 12.dp),
+                            modifier = Modifier.padding(top = 8.dp),
                         )
                     }
 
@@ -2130,6 +2133,8 @@ fun MapScreen(
                 onRemoveFromList = { listId -> vm.removePlaceFromList(listId, state.selected!!) },
                 onCreateListWith = { name -> val id = vm.createList(name); vm.addPlaceToList(id, state.selected!!) },
                 onSetNote = { note -> vm.setPlaceNote(state.selected!!, note) },
+                openTab = sheetTab,
+                onOpenTabConsumed = { sheetTab = null },
                 minimizeTick = sheetPanTick,
                 // No navigationBarsPadding here: the sheet's background should reach
                 // the screen bottom (no map peeking through under the nav bar); the
@@ -2194,6 +2199,11 @@ fun MapScreen(
                             ),
                         )
                     }
+                },
+                onActionMenu = { p ->
+                    focusManager.clearFocus()
+                    sheetTab = "Menu"
+                    vm.selectPlace(p)
                 },
                 // Landscape: left side panel like the place sheet (see its modifier note).
                 modifier = Modifier
@@ -3029,6 +3039,7 @@ private fun SearchResults(
     onActionDirections: (Place) -> Unit = {},
     onActionCall: (Place) -> Unit = {},
     onActionShare: (Place) -> Unit = {},
+    onActionMenu: (Place) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // A BOTTOM sheet, Google-style, sharing the place sheet's detent grammar:
@@ -3222,9 +3233,8 @@ private fun SearchResults(
     Card(
         // statusBarsPadding caps the sheet's growth below the status bar, so the handle pill
         // never slides under the clock / camera cutout when expanded (user 2026-07-09).
-        // Square top corners: expanded docks flush under the affixed search bar, Google-style.
-        Modifier.statusBarsPadding().padding(top = 0.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp),
+        Modifier.statusBarsPadding().padding(top = 8.dp).fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
         colors = CardDefaults.cardColors(containerColor = SheetPalette.bg(dark), contentColor = SheetPalette.ink(dark)),
     ) {
         Column(Modifier.navigationBarsPadding()) {
@@ -3340,12 +3350,12 @@ private fun SearchResults(
                 val chipColors = FilterChipDefaults.elevatedFilterChipColors(
                     containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     labelColor = androidx.compose.ui.graphics.Color.White,
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
+                    selectedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    selectedLabelColor = androidx.compose.ui.graphics.Color.White,
+                    selectedLeadingIconColor = androidx.compose.ui.graphics.Color.White,
                 )
                 val listChipBorder = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF5F6368))
-                val listChipShape = RoundedCornerShape(8.dp)
+                val listChipShape = androidx.compose.foundation.shape.CircleShape
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -3353,9 +3363,36 @@ private fun SearchResults(
                         .padding(start = 16.dp, end = 8.dp, bottom = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // Open now FIRST, Google-style: a leading filter before the sort menus.
-                    // List-view chips are 8dp rounded rects with a hairline border (listChipShape/
-                    // listChipBorder above); selected chips fill blue.
+                    // Sort FIRST like Google (Relevance / Rating / Distance menu): a sort is
+                    // always active, so the chip always reads selected (filled), labeled with
+                    // the current mode. Relevance is the default.
+                    Box {
+                        ElevatedFilterChip(
+                            selected = true,
+                            onClick = { sortMenu = true },
+                            label = {
+                                Text(
+                                    when (sortMode) {
+                                        1 -> stringResource(R.string.mapscreen_sort_rating)
+                                        2 -> stringResource(R.string.mapscreen_sort_distance)
+                                        else -> stringResource(R.string.mapscreen_sort_relevance)
+                                    },
+                                )
+                            },
+                            shape = listChipShape,
+                            colors = chipColors,
+                            border = null,
+                            trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        )
+                        VelaMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                            item(stringResource(R.string.mapscreen_sort_relevance)) { sortMode = 0; sortMenu = false }
+                            item(stringResource(R.string.mapscreen_sort_rating_item)) { sortMode = 1; sortMenu = false }
+                            item(stringResource(R.string.mapscreen_sort_distance_item)) { sortMode = 2; sortMenu = false }
+                        }
+                    }
+                    // Open now after the sort, Google order.
+                    // List-view chips are hairline-bordered pills; selected chips fill
+                    // container-high.
                     ElevatedFilterChip(
                         selected = openOnly,
                         onClick = { openOnly = !openOnly },
@@ -3399,32 +3436,6 @@ private fun SearchResults(
                             { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
                         } else null,
                     )
-                    // Sort: a menu (Relevance / Rating / Distance). LEFT of the filters like
-                    // Google's results header (user 2026-07-13).
-                    Box {
-                        ElevatedFilterChip(
-                            selected = sortMode > 0,
-                            onClick = { sortMenu = true },
-                            label = {
-                                Text(
-                                    when (sortMode) {
-                                        1 -> stringResource(R.string.mapscreen_sort_rating)
-                                        2 -> stringResource(R.string.mapscreen_sort_distance)
-                                        else -> stringResource(R.string.mapscreen_sort)
-                                    },
-                                )
-                            },
-                            shape = listChipShape,
-                            colors = chipColors,
-                            border = if (sortMode > 0) null else listChipBorder,
-                            trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        )
-                        VelaMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                            item(stringResource(R.string.mapscreen_sort_relevance)) { sortMode = 0; sortMenu = false }
-                            item(stringResource(R.string.mapscreen_sort_rating_item)) { sortMode = 1; sortMenu = false }
-                            item(stringResource(R.string.mapscreen_sort_distance_item)) { sortMode = 2; sortMenu = false }
-                        }
-                    }
                     // Rating floor: a MENU of Google's tiers (3.5+/4.0+/4.5+) — the old fixed
                     // 4.0★ toggle couldn't say what it did or offer another bar.
                     Box {
@@ -3501,15 +3512,42 @@ private fun SearchResults(
                 // Gallery is display-sized only: the w320-h220 search payloads decode at list
                 // size (400px wide cells) instead of full-res, which was the scroll jank.
                 val gallery = remember(place.id, place.photoUrls) { place.photoUrls.take(3) }
-                // Google-style result card: text block, 2-3 photo gallery with GROUPED outer
-                // corners (16dp outside, square where images touch), then the action pills.
-                // Cards are separated by a thick black spacer, not a 1px divider.
+                // Google-style result card: photo strip FIRST (full-bleed), then the text
+                // block, then the action pills. Cards breathe with a plain gap, no bars.
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .dpadHighlight(RoundedCornerShape(6.dp))
                         .clickable { onPick(place) },
                 ) {
+                    // Photo strip with GROUPED outer corners (16dp outside, square
+                    // where images touch), full-bleed above the text, Google-style.
+                    // Any photo at all shows: a single photo fills the strip.
+                    if (gallery.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            gallery.forEachIndexed { i, url ->
+                                val corners = when {
+                                    gallery.size == 1 -> RoundedCornerShape(16.dp)
+                                    i == 0 -> RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+                                    i == gallery.lastIndex -> RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+                                    else -> RoundedCornerShape(0.dp)
+                                }
+                                coil.compose.AsyncImage(
+                                    model = app.vela.ui.place.atWidth(url, 400),
+                                    contentDescription = null,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(110.dp)
+                                        .clip(corners)
+                                        .background(SheetPalette.dim(dark).copy(alpha = 0.2f)),
+                                )
+                            }
+                        }
+                    }
                     Column(
                         Modifier
                             .fillMaxWidth()
@@ -3538,12 +3576,19 @@ private fun SearchResults(
                                     color = SheetPalette.dim(dark),
                                 )
                             }
+                            // Google puts the distance in the rating row ("4.2 ★★★★ (1,387) · 11 km").
+                            place.distanceMeters?.let {
+                                Text(
+                                    " · " + formatDistance(it),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SheetPalette.dim(dark),
+                                )
+                            }
                         }
                     }
                     val sub = listOfNotNull(
                         place.priceText,
                         place.category,
-                        place.distanceMeters?.let { formatDistance(it) },
                     ).joinToString(" · ")
                     if (sub.isNotEmpty()) {
                         Text(
@@ -3553,18 +3598,7 @@ private fun SearchResults(
                             modifier = Modifier.padding(top = 1.dp),
                         )
                     }
-                    // Full address (city/state/zip) to disambiguate similar names
-                    // and identical-looking residential addresses.
-                    place.address?.let { addr ->
-                        Text(
-                            addr,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SheetPalette.dim(dark),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 1.dp),
-                        )
-                    }
+                    // (No street address: Google's rows don't carry one.)
                     // Gas stations: the live price on its own line under the address, bold with a
                     // pump glyph in the title ink so it pops out of the row (user 2026-07-10).
                     place.fuelPrice?.let { fp ->
@@ -3596,11 +3630,12 @@ private fun SearchResults(
                             modifier = Modifier.padding(top = 3.dp),
                         )
                     } else place.statusText?.let { status ->
-                        Text(
+                        app.vela.ui.StatusText(
                             status,
+                            openNow = place.openNow,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
-                            color = placeStatusColor(status, place.openNow),
+                            dim = SheetPalette.dim(dark),
                             modifier = Modifier.padding(top = 3.dp),
                         )
                     }
@@ -3624,6 +3659,22 @@ private fun SearchResults(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                        }
+                    }
+                    // Google-style service checks ("✓ Dine-in · ✓ Takeout · ✓ Delivery")
+                    // under the hours, from the About fetch. Same source as the sheet's chips.
+                    val checks = remember(place.id, place.about) { app.vela.ui.place.attributeHighlights(place.about).take(3) }
+                    if (checks.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            checks.forEachIndexed { i, c ->
+                                if (i > 0) Text("·", style = MaterialTheme.typography.bodyMedium, color = SheetPalette.dim(dark))
+                                Icon(Icons.Default.Check, contentDescription = null, tint = SheetPalette.statusGreen(dark), modifier = Modifier.size(14.dp))
+                                Text(c, style = MaterialTheme.typography.bodyMedium, color = SheetPalette.dim(dark), maxLines = 1)
+                            }
                         }
                     }
                     // Google-style per-row action buttons: Directions (filled) + Call/Share
@@ -3653,42 +3704,25 @@ private fun SearchResults(
                             primary = false,
                             onClick = { onActionShare(place) },
                         )
-                    }
-                    } // text column (16dp inset, top 14dp)
-                    // 2-3 photo gallery with GROUPED outer corners (16dp outside, square where
-                    // images touch), full-bleed below the pills, Google-style.
-                    if (gallery.size >= 2) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 14.dp),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            gallery.forEachIndexed { i, url ->
-                                val corners = when (i) {
-                                    0 -> RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
-                                    gallery.lastIndex -> RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
-                                    else -> RoundedCornerShape(0.dp)
-                                }
-                                coil.compose.AsyncImage(
-                                    model = app.vela.ui.place.atWidth(url, 400),
-                                    contentDescription = null,
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(110.dp)
-                                        .clip(corners)
-                                        .background(SheetPalette.dim(dark).copy(alpha = 0.2f)),
-                                )
-                            }
+                        // Menu opens the sheet straight onto its Menu tab (Google's
+                        // row-level Menu button). Only when menu photos exist.
+                        if (app.vela.ui.place.hasMenuPhotos(place)) {
+                            ResultActionButton(
+                                icon = Icons.Default.List,
+                                label = stringResource(R.string.place_tab_menu),
+                                primary = false,
+                                onClick = { onActionMenu(place) },
+                            )
                         }
                     }
-                    } // text column (16dp inset, top 14dp) + full-bleed gallery
-                    // Thick black separation block after each card, Google-style (no 1px dividers).
+                    } // text column (16dp inset)
+                    } // card column
+                    // Plain breathing gap between cards, Google-style (no bars/dividers).
                     Spacer(
                         Modifier
                             .fillMaxWidth()
                             .padding(top = 14.dp)
-                            .height(8.dp)
-                            .background(androidx.compose.ui.graphics.Color.Black),
+                            .height(8.dp),
                     )
                 } // itemsIndexed cards + separators
                 // Next pages of the same search, on demand (the first fetch is three pages).

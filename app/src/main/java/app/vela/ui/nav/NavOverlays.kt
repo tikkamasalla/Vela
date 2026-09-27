@@ -166,6 +166,18 @@ fun ManeuverBanner(
     }
     val content = if (previewing && !minMode) MaterialTheme.colorScheme.onSurfaceVariant
     else androidx.compose.ui.graphics.Color.White
+    // The detached "then" strip under the card is darker than the banner (Google's reads
+    // as a dimmer tab); preview/minMode follow the main card's own treatment.
+    val thenContainer = when {
+        minMode -> androidx.compose.ui.graphics.Color.Black
+        previewing -> MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val thenContent = when {
+        minMode -> androidx.compose.ui.graphics.Color.White
+        previewing -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     // The card tracks your finger as you drag (translationX = offsetX); on release
     // past a threshold it slides the rest of the way out, swaps to the next/prev
     // step, then the new card slides in from the opposite edge — like flicking a
@@ -881,7 +893,9 @@ fun NavBarTop(
         trafficRatio == null -> androidx.compose.ui.graphics.Color.White
         trafficRatio > 1.4 -> SheetPalette.TrafficRed
         trafficRatio > 1.15 -> SheetPalette.TrafficAmber
-        else -> SheetPalette.TrafficGreen
+        // Good-traffic green on the black pill: Google's vivid green, not the deep
+        // light-theme value (the bar is black in both themes).
+        else -> androidx.compose.ui.graphics.Color(0xFF4CAF50)
     }
     Column {
         // The handle: a chevron that says "this lifts" (or "this closes", pointing down on the

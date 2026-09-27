@@ -287,8 +287,14 @@ object SearchParser {
         }
         entry.atPath(pathOf(paths, "photos")).arr()?.forEach { add(it.at(6, 0).str()) }
         entry.at(1, 204, 0).arr()?.forEach { add(it.at(1, 2, 0, 0).str()) }
+        // Shape-drift fallback: photo URLs carry the distinctive /p/ marker — sweep the
+        // serialized entry so a moved photos block can't silently zero the list. The /p/
+        // gate keeps review avatars (/a/) and tiles out; de-dup absorbs path hits.
+        PHOTO_URL.findAll(entry.toString()).forEach { add("https://" + it.value.replace("\\/", "/")) }
         return urls.take(12)
     }
+
+    private val PHOTO_URL = Regex("""lh3\.googleusercontent\.com[\\/]+p/[A-Za-z0-9_\-]+=[^"\\\s]*""")
 
     /** Drop a leading business-name from a formatted address ("Safeway, 1451 W Covell Blvd" to "1451 ...").
      *  The sheet shows the name on its own line, so a name-prefixed address reads it twice. Strips ONLY
