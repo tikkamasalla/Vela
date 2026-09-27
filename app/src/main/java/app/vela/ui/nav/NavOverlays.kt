@@ -194,8 +194,11 @@ fun ManeuverBanner(
     // the 54dp glyph + full paddings buried the map on sub-500dp-tall displays, so the banner
     // shrinks its chrome there. Ordinary phones and tall head units never trip the gate.
     val compact = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 500
+    // Main card + detached "then" strip share the caller's slot, so measured
+    // offsets below (compass, chips) stay right.
+    Column(modifier) {
     Card(
-        modifier
+        Modifier
             .fillMaxWidth()
             .graphicsLayer { translationX = offsetX.value }
             .pointerInput(Unit) {
@@ -359,38 +362,6 @@ fun ManeuverBanner(
                     LaneGuide(it, type, on = content)
                 }
             }
-            // Compound "then <next>" preview — only when the next maneuver CLOSELY follows this one
-            // (Google shows it only for back-to-back turns like "exit, then keep right") AND we're
-            // actually APPROACHING this one: gated on the gap alone, an exit 12 km ahead with a merge
-            // 300 m after it kept "then ⤵ Merge onto I-80 E" on the banner for the whole 12 km — the
-            // same noise the lane gate was added to kill. Preview always shows (inspecting a step).
-            if (nextText != null && nextType != null && isCompoundNext(nextDistanceMeters) &&
-                (previewing || distanceMeters <= laneShowM)
-            ) {
-                Spacer(Modifier.height(8.dp))
-                val nextSigns = roadSigns(nextText, nextRef)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        stringResource(R.string.nav_compound_then),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = content.copy(alpha = 0.7f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        if (isRoundabout(nextType)) rememberRoundaboutGlyph(nextRoundabout) else maneuverIcon(nextType),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    nextSigns.firstOrNull()?.let { SignChip(it, onBanner = true, minMode = minMode); Spacer(Modifier.width(6.dp)) }
-                    // Short form: the chip beside it names the route, and the full sign used to
-                    // ellipsize arbitrarily mid-destination on this single-line row.
-                    Text(
-                        app.vela.core.i18n.NavStringsRegistry.current().repeatShort(nextText),
-                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
             if (previewing) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -398,6 +369,44 @@ fun ManeuverBanner(
                     style = MaterialTheme.typography.labelMedium,
                     color = content.copy(alpha = 0.85f),
                 )
+            }
+        }
+    }
+        // Detached Google-style "then" strip: its own smaller, darker tab under the main
+        // card — just "then <arrow> <full instruction>", no shield chip, no distance.
+        // Same compound + approach gates as the old inline row.
+        if (nextText != null && nextType != null && isCompoundNext(nextDistanceMeters) &&
+            (previewing || distanceMeters <= laneShowM)
+        ) {
+            Card(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = thenContainer, contentColor = thenContent),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.nav_compound_then),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = thenContent.copy(alpha = 0.7f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        if (isRoundabout(nextType)) rememberRoundaboutGlyph(nextRoundabout) else maneuverIcon(nextType),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        nextText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }

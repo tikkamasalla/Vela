@@ -2401,6 +2401,8 @@ class MapViewModel @Inject constructor(
                 stopDepartures = null, stopDeparturesLoading = false, stopDeparturesFor = null,
             )
         }
+        // Offline with a stored copy: serve it instead of the network fetches below.
+        if (offlineNow() && loadOfflinePlace(p)) return
         requestReviews(p)
         fetchPhotos(p)
         fetchPlaceDetails(p)
@@ -2944,6 +2946,7 @@ class MapViewModel @Inject constructor(
                 ?.also { if (fidKey != null) placeCachePut(detailsCache, fidKey, it) }
             if (d != null) mergeDetails(p, d)
             _state.update { st -> if (st.selected?.id != p.id) st else st.copy(loadingDetails = false) }
+            persistOfflinePlace(p.id)
         }
     }
 
@@ -3184,6 +3187,50 @@ class MapViewModel @Inject constructor(
     private val photoCache = lru<app.vela.core.data.google.parse.PhotoPage>()
     private val feedCache = lru<app.vela.core.data.google.parse.ReviewFeed>()
     private val detailsCache = lru<app.vela.core.model.PlaceDetails>()
+
+    /** Offline place cache (Settings > Offline > Cache places): disk twin of the
+     *  details + reviews the sheet just loaded. Written on every successful online
+     *  load, served when a place opens with no network. Photos ride Coil's disk
+     *  cache (prefetched below); text menus aren't parsed anywhere, so there is
+     *  nothing of them to store. */
+    private fun placeCacheDir(): java.io.File = java.io.File(appContext.filesDir, "placecache")
+
+    private fun persistOfflinePlace(placeId: String) {
+        if (!app.vela.ui.OfflinePlaces.on.value) return
+        val st = _state.value
+        val sel = st.selected
+        if (sel == null || sel.id != placeId) return
+        viewModelScope.launch(Dispatchers.IO) {
+            app.vela.core.data.PlaceCache.save(placeCacheDir(), sel, st.reviews)
+            // Warm Coil's disk cache so the gallery survives offline too.
+            val loader = coil.Coil.imageLoader(appContext)
+            sel.photoUrls.take(12).forEach { url ->
+                runCatching {
+                    loader.enqueue(
+                        coil.request.ImageRequest.Builder(appContext)
+                            .data(url)
+                            .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+                            .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                            .build()
+                    )
+                }
+            }
+        }
+    }
+
+    /** Serve a stored copy when opening a place offline. True when served (the
+     *  caller skips the network fetches); false = miss, carry on as usual. */
+    private fun loadOfflinePlace(p: Place): Boolean {
+        if (!app.vela.ui.OfflinePlaces.on.value) return false
+        val rec = app.vela.core.data.PlaceCache.load(placeCacheDir(), p) ?: return false
+        _state.update {
+            if (it.selected?.id != p.id) it else it.copy(
+                selected = rec.place, reviews = rec.reviews,
+                loadingDetails = false, reviewsLoading = false, photosLoading = false,
+            )
+        }
+        return true
+    }
     private fun <T> placeCacheGet(m: LinkedHashMap<String, PlaceCacheEntry<T>>, key: String, ttlMs: Long): T? = synchronized(m) {
         m[key]?.takeIf { System.currentTimeMillis() - it.at < ttlMs }?.value
     }
@@ -3224,6 +3271,7 @@ class MapViewModel @Inject constructor(
                     reviewsMoreLoading = false,
                 )
             }
+            persistOfflinePlace(p.id)
         }
     }
 
@@ -3352,6 +3400,7 @@ class MapViewModel @Inject constructor(
                     if (_state.value.selected?.featureId == fid) {
                         _state.update { it.copy(reviews = feed.reviews, reviewsLoading = false, reviewsFound = 0, reviewsLimited = limited, reviewsNextToken = feed.nextToken) }
                     }
+                    persistOfflinePlace(p.id)
                     return@launch
                 }
             }
@@ -3373,6 +3422,7 @@ class MapViewModel @Inject constructor(
             }
             if (_state.value.selected?.featureId == fid) {
                 _state.update { it.copy(reviews = revs, reviewsLoading = false, reviewsFound = 0) }
+                persistOfflinePlace(p.id)
             }
         }
     }
@@ -6696,8 +6746,14 @@ class MapViewModel @Inject constructor(
         // Tile downloads are MapLibre's own machinery (not downloadLaunch), so they hold the
         // background-download keeper directly for their duration (issue #212).
         app.vela.download.DownloadService.begin(appContext, label)
+        // Satellite rides along when its layer is on: Esri imagery packs into the same
+        // region (vector tiles are small next to raster, so the size estimate under-reads —
+        // the tile-count guard still caps runaway areas).
+        val withSat = app.vela.ui.SatelliteLayer.on.value
         app.vela.offline.OfflineMaps.download(
-            appContext, _state.value.styleUri, bounds, plan.minZ, 16.0, name,
+            appContext, _state.value.styleUri, bounds, plan.minZ, 16.0,
+            if (withSat) "$name + satellite" else name,
+            satelliteTiles = if (withSat) app.vela.offline.OfflineMaps.ESRI_TILES else null,
             onCreated = { areaRegion = it },
             onProgress = { pct -> _state.update { st -> st.copy(areaDownloadPct = pct) } },
         ) { reason ->

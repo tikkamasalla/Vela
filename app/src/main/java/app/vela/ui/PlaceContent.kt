@@ -72,6 +72,29 @@ object HideAdult {
 }
 
 /**
+ * Whether viewed places are cached for offline use. ON (default): every successful
+ * online detail + review load is written to disk (tiny JSON), photos are prefetched
+ * into Coil's disk cache, and opening a cached place with no network serves the
+ * stored copy instead of an empty sheet. Text menus are not parsed anywhere yet,
+ * so there is nothing of them to cache.
+ */
+object OfflinePlaces {
+    val on = mutableStateOf(true)
+
+    fun init(context: Context) {
+        on.value = prefs(context).getBoolean(KEY, true)
+    }
+
+    fun set(context: Context, value: Boolean) {
+        on.value = value
+        prefs(context).edit().putBoolean(KEY, value).apply()
+    }
+
+    private fun prefs(c: Context) = c.getSharedPreferences("vela_settings", Context.MODE_PRIVATE)
+    private const val KEY = "offline_places"
+}
+
+/**
  * Whether to hide links that launch arbitrary EXTERNAL web content from a place: the Website pill/row,
  * the Street View pano (opens Google externally), and the Book online / Reserve / Order online action.
  * OFF by default (everything shown); ON suppresses those so no place-detail control opens an arbitrary

@@ -27,11 +27,20 @@ object OfflineMaps {
     /** How a tile download ended - the caller turns these into localized user text. */
     enum class DoneReason { SAVED, FAILED, TOO_LARGE }
 
+    /** Esri World Imagery raster (same tiles the live satellite button serves):
+     *  openly usable, z0–19 native. */
+    const val ESRI_TILES = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+
     /** Kick off a tile download for [bounds]. Progress arrives as 0..100 through [onProgress]
      *  (state-driven card material, NOT flash-status spam - the old string callback re-flashed the
      *  heads-up banner on every tick, which stacked a second banner over the progress card, user
      *  2026-07-23), the created [OfflineRegion] is handed out through [onCreated] so the caller can
-     *  CANCEL (STATE_INACTIVE + delete), and [onDone] fires exactly once with the outcome. */
+     *  CANCEL (STATE_INACTIVE + delete), and [onDone] fires exactly once with the outcome.
+     *
+     *  [satelliteTiles]: when non-null, the region ALSO packs that raster source (satellite
+     *  imagery is a runtime-added source, so the plain style never contains it). The style is
+     *  fetched, augmented, and handed to the packer as a temp file — any failure falls back to
+     *  the plain style (vector-only), never a failed download. */
     fun download(
         context: Context,
         styleUrl: String,
@@ -39,8 +48,60 @@ object OfflineMaps {
         minZoom: Double,
         maxZoom: Double,
         name: String,
+        satelliteTiles: String? = null,
         onCreated: (OfflineRegion) -> Unit = {},
         onProgress: (Int) -> Unit = {},
+        onDone: (DoneReason) -> Unit,
+    ) {
+        if (satelliteTiles == null) {
+            create(context, styleUrl, bounds, minZoom, maxZoom, name, onCreated, onProgress, onDone)
+            return
+        }
+        // Style fetch off the main thread; creation back on it (MapLibre requires it).
+        kotlin.concurrent.thread {
+            val effective = runCatching { withSatellite(context, styleUrl, satelliteTiles) }.getOrNull() ?: styleUrl
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                create(context, effective, bounds, minZoom, maxZoom, name, onCreated, onProgress, onDone)
+            }
+        }
+    }
+
+    /** Style JSON with [tiles] injected as a raster source, materialized to a temp file.
+     *  Packing reads sources, not layers, so no layer is added. Throws on any failure
+     *  (the caller falls back to the plain style). */
+    private fun withSatellite(context: Context, styleUrl: String, tiles: String): String {
+        val json = when {
+            styleUrl.startsWith("asset://") ->
+                context.assets.open(styleUrl.removePrefix("asset://")).bufferedReader().readText()
+            styleUrl.startsWith("file://") ->
+                java.io.File(styleUrl.removePrefix("file://")).readText()
+            styleUrl.startsWith("http") ->
+                java.net.URL(styleUrl).openStream().bufferedReader().readText()
+            else -> return styleUrl
+        }
+        val root = JSONObject(json)
+        val sources = root.optJSONObject("sources") ?: JSONObject().also { root.put("sources", it) }
+        sources.put(
+            "vela-sat-offline",
+            JSONObject()
+                .put("type", "raster")
+                .put("tiles", org.json.JSONArray().put(tiles))
+                .put("tileSize", 256),
+        )
+        val f = java.io.File(context.cacheDir, "offline-style-sat.json")
+        f.writeText(root.toString())
+        return "file://" + f.absolutePath
+    }
+
+    private fun create(
+        context: Context,
+        styleUrl: String,
+        bounds: LatLngBounds,
+        minZoom: Double,
+        maxZoom: Double,
+        name: String,
+        onCreated: (OfflineRegion) -> Unit,
+        onProgress: (Int) -> Unit,
         onDone: (DoneReason) -> Unit,
     ) {
         val manager = OfflineManager.getInstance(context)
