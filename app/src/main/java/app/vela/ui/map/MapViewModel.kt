@@ -1618,6 +1618,13 @@ class MapViewModel @Inject constructor(
             )
         }
         rememberRecentPlace(sp)
+        // Offline: the enrich search below can't run — serve the stored copy
+        // instead. Without this the sheet opens as a bare name/location shell
+        // with no details, reviews or photos (user 2026-09-28).
+        if (offlineNow()) {
+            loadOfflinePlace(base)
+            return
+        }
         // A saved place has no feature id, so it used to open with no photos/reviews.
         // Enrich it via a search (like a POI tap) to pull them; keep the saved id so
         // the star stays filled.

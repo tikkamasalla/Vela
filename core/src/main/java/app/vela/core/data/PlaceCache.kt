@@ -45,11 +45,21 @@ object PlaceCache {
     }
 
     fun load(dir: File, place: Place, maxAgeMs: Long = MAX_AGE_MS): CachedPlace? = runCatching {
-        val f = File(dir, keyOf(place) + ".json")
-        if (!f.exists()) return null
-        val rec = json.decodeFromString(CachedPlace.serializer(), f.readText())
-        if (System.currentTimeMillis() - rec.savedAtMs > maxAgeMs) return null
-        rec
+        val direct = File(dir, keyOf(place) + ".json")
+        if (direct.exists()) {
+            val rec = json.decodeFromString(CachedPlace.serializer(), direct.readText())
+            if (System.currentTimeMillis() - rec.savedAtMs <= maxAgeMs) return rec
+        }
+        // Key-scheme drift: a reopened saved/recent place carries only the row id
+        // while the online record was keyed by placeId/featureId. Fall back to
+        // scanning for the same place id (user 2026-09-28: offline open missed).
+        dir.listFiles { f -> f.extension == "json" }?.forEach { f ->
+            val rec = runCatching { json.decodeFromString(CachedPlace.serializer(), f.readText()) }.getOrNull()
+            if (rec != null && rec.place.id == place.id &&
+                System.currentTimeMillis() - rec.savedAtMs <= maxAgeMs
+            ) return rec
+        }
+        null
     }.getOrNull()
 
     fun dirSizeBytes(dir: File): Long = runCatching {
