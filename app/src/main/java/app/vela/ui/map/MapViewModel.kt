@@ -3027,6 +3027,7 @@ class MapViewModel @Inject constructor(
                     )
                 }
             }
+            persistOfflinePlace(p.id)
         }
     }
 
@@ -3088,6 +3089,7 @@ class MapViewModel @Inject constructor(
                             photosNextToken = page.nextToken,
                         ) else st
                     }
+                    persistOfflinePlace(p.id)
                     return@launch
                 }
             }
@@ -3174,6 +3176,7 @@ class MapViewModel @Inject constructor(
                     morePhotosFor = if (!full && gallery.size >= FIRST_PHOTOS) fid else null,
                 ) else st
             }
+            persistOfflinePlace(p.id)
         }
     }
 
@@ -3201,10 +3204,28 @@ class MapViewModel @Inject constructor(
         val sel = st.selected
         if (sel == null || sel.id != placeId) return
         viewModelScope.launch(Dispatchers.IO) {
-            app.vela.core.data.PlaceCache.save(placeCacheDir(), sel, st.reviews)
+            // Monotonic merge: this persist may run BEFORE reviews/photos arrive
+            // (details land first, reviews are lazy, photos stream in). Never let
+            // an early write clobber what a previous write already stored.
+            val prev = app.vela.core.data.PlaceCache.load(placeCacheDir(), sel)
+            val reviews = st.reviews.ifEmpty { prev?.reviews.orEmpty() }
+            val place = sel.let { s ->
+                val have = s.photoUrls.toSet()
+                val extra = prev?.place?.photoUrls.orEmpty().withIndex().filter { (_, u) -> u !in have }
+                if (extra.isEmpty()) s else {
+                    val pDates = prev?.place?.photoDates.orEmpty()
+                    val pCats = prev?.place?.photoCategories.orEmpty()
+                    s.copy(
+                        photoUrls = s.photoUrls + extra.map { it.value },
+                        photoDates = s.photoDates + extra.map { pDates.getOrNull(it.index) },
+                        photoCategories = s.photoCategories + extra.map { pCats.getOrNull(it.index) },
+                    )
+                }
+            }
+            app.vela.core.data.PlaceCache.save(placeCacheDir(), place, reviews)
             // Warm Coil's disk cache so the gallery survives offline too.
             val loader = coil.Coil.imageLoader(appContext)
-            sel.photoUrls.take(12).forEach { url ->
+            place.photoUrls.take(12).forEach { url ->
                 runCatching {
                     loader.enqueue(
                         coil.request.ImageRequest.Builder(appContext)
@@ -3288,7 +3309,10 @@ class MapViewModel @Inject constructor(
      * Performance "Load all photos and reviews" ([app.vela.ui.FullPlaceLoad]) keeps the old eager load.
      */
     private fun requestReviews(p: Place) {
-        if (app.vela.ui.FullPlaceLoad.on.value) { reviewsPendingFor = null; fetchReviews(p); return }
+        // Offline-cache users opted into storing places: fetch eagerly so there
+        // is something to store. Most taps never open the tab, so a lazy-only
+        // fetch would leave every cached record review-less (user 2026-09-28).
+        if (app.vela.ui.FullPlaceLoad.on.value || app.vela.ui.OfflinePlaces.on.value) { reviewsPendingFor = null; fetchReviews(p); return }
         if (!app.vela.ui.ShowReviews.on.value || googleOff()) return
         reviewsJob?.cancel()
         reviewsPendingFor = p
