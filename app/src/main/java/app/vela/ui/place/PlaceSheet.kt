@@ -570,27 +570,26 @@ fun PlaceSheet(
     // engagement signal, cleared when they drag back toward the sheet top. Hides the native
     // histogram so the panel gets the height.
     val reviewsEngaged = remember(sheetKey) { mutableStateOf(false) }
-    // Top strip IS the tab bar now: one shared selection for the strip and the
-    // content below. The strip uses FIXED indices (Overview=0, Reviews=1, About=2);
-    // the content below carries Reviews+About only, so the call site maps strip→content.
+    // Top strip IS the tab bar (Overview/Reviews/About, fixed indices 0/1/2); the
+    // content below carries the PlaceTabs keys (Reviews/Menu/About, dynamic).
+    // Both selections live here: stripSel drives the underline, contentSel the body.
     var stripSel by remember(place.id, sheetKey) { mutableIntStateOf(0) }
+    var contentSel by remember(place.id, sheetKey) { mutableIntStateOf(0) }
     var tabsTopPx by remember(place.id) { mutableStateOf(0f) }
-    fun contentCount(): Int {
-        val menu = hasMenuPhotos(place) && app.vela.ui.LoadPhotos.on.value
-        val rev = place.rating != null || reviews.isNotEmpty() || place.featuredReview != null
-        val about = place.about.isNotEmpty() || place.editorialSummary != null || place.ownerDescription != null
-        return (if (rev) 1 else 0) + (if (menu) 1 else 0) + (if (about) 1 else 0)
-    }
-    /** Strip index → content index (About alone collapses to 0). */
-    fun stripToContent(s: Int): Int = when (s) {
-        1 -> 0
-        2 -> (contentCount() - 1).coerceAtLeast(0)
-        else -> 0
-    }
-    /** Content index → strip index (content 0 = Reviews, last = About when 2+). */
-    fun contentToStrip(c: Int): Int {
-        if (contentCount() <= 1) return if (c == 0) 1 else 0
-        return if (c == 0) 1 else 2
+    // Content keys mirrored from PlaceTabs below (same gates) so strip↔content
+    // mapping can never drift: Reviews/Menu/About in content order.
+    fun contentKeys(): List<String> = buildList {
+        val isTransitCategory = place.category?.lowercase()?.let { c ->
+            listOf("station", "stop", "transit", "transport", "hub", "bus", "subway", "metro", "tram", "rail", "ferry", "terminal", "platform").any { it in c }
+        } == true
+        val isBareStop = isTransitCategory && place.rating == null && reviews.isEmpty() && place.featuredReview == null
+        val hasReviews = app.vela.ui.ShowReviews.on.value && (
+            place.rating != null || reviews.isNotEmpty() || reviewsLoading || place.featuredReview != null ||
+                (app.vela.ui.LiveReviews.on.value && place.featureId?.contains(":") == true && !isBareStop)
+            )
+        if (hasReviews) add("Reviews")
+        if (hasMenuPhotos(place) && app.vela.ui.LoadPhotos.on.value) add("Menu")
+        if (!isBareStop && (place.about.isNotEmpty() || place.editorialSummary != null || place.ownerDescription != null)) add("About")
     }
     fun jumpToTab(key: String) {
         if (key == "Overview") {
@@ -598,9 +597,37 @@ fun PlaceSheet(
             scope.launch { bodyScroll.animateScrollTo(0) }
             return
         }
+        // Reviews/About by KEY (never by position): the body follows even as the
+        // fetch lands tabs late. Un-minimize so the body is actually visible, and
+        // fire the reviews fetch directly — it otherwise only starts when the tab
+        // area scrolls on screen, which a minimized sheet never does.
+        val keys = contentKeys()
+        contentSel = keys.indexOf(key).takeIf { it >= 0 } ?: 0
         stripSel = if (key == "About") 2 else 1
+        if (key == "Reviews") onNeedReviews()
+        minimizedState.value = false
         onOpenTabConsumed()
-        scope.launch { bodyScroll.animateScrollTo(tabsTopPx.roundToInt()) }
+        // PlaceTabs is the last item in the sheet: scroll to the end. (An earlier
+        // build scrolled to the tabs' measured positionInParent, which is relative
+        // to the immediate parent — not the scroll offset — and landed mid-body.)
+        scope.launch { bodyScroll.animateScrollTo(bodyScroll.maxValue) }
+    }
+    // Results' Menu button (openTab): same key routing; the strip has no Menu
+    // entry so its underline stays put while the Menu body shows. Re-fires as the
+    // fetch lands (photo categories arrive late); consumed only once selected.
+    androidx.compose.runtime.LaunchedEffect(place.id, openTab, reviews.size, place.photoCategories.size, place.about.size) {
+        if (openTab != null) {
+            val idx = contentKeys().indexOf(openTab)
+            if (idx >= 0) {
+                contentSel = idx
+                if (openTab != "Menu") stripSel = if (openTab == "About") 2 else 1
+                if (openTab == "Reviews") onNeedReviews()
+                minimizedState.value = false
+                scope.launch { bodyScroll.animateScrollTo(bodyScroll.maxValue) }
+                onOpenTabConsumed()
+            }
+        }
+        Unit
     }
     val onPanelOverscroll: (Float) -> Unit = { dy ->
         val consumed = bodyScroll.dispatchRawDelta(-dy)
@@ -1308,7 +1335,7 @@ fun PlaceSheet(
                 context = context,
                 onToggleSave = onToggleSave,
             )
-            PlaceTabs(place, reviews, reviewsLoading, reviewsFound, onRetryReviews, ink, dim, onNeedReviews = onNeedReviews, onPanelOverscroll = onPanelOverscroll, onPanelOverscrollEnd = onPanelOverscrollEnd, onPanelEngaged = onPanelEngaged, panelEngaged = reviewsEngaged.value, reviewsLimited = reviewsLimited, onMoreReviews = onMoreReviews, reviewsMoreLoading = reviewsMoreLoading, openTab = openTab, onOpenTabConsumed = onOpenTabConsumed, selectedTab = stripToContent(stripSel), onTabSelected = { stripSel = contentToStrip(it) }, onTabsMeasured = { tabsTopPx = it })
+            PlaceTabs(place, reviews, reviewsLoading, reviewsFound, onRetryReviews, ink, dim, onNeedReviews = onNeedReviews, onPanelOverscroll = onPanelOverscroll, onPanelOverscrollEnd = onPanelOverscrollEnd, onPanelEngaged = onPanelEngaged, panelEngaged = reviewsEngaged.value, reviewsLimited = reviewsLimited, onMoreReviews = onMoreReviews, reviewsMoreLoading = reviewsMoreLoading, openTab = null, onOpenTabConsumed = {}, selectedTab = contentSel, onTabSelected = { contentSel = it }, onTabsMeasured = { tabsTopPx = it })
             }
             }
             }
@@ -3646,17 +3673,9 @@ private fun PlaceTabs(
     onTabSelected: (Int) -> Unit = {},
     onTabsMeasured: (Float) -> Unit = {},
 ) {
-    // A deep tab from OUTSIDE (results' Menu button): select it once through the
-    // shared slot, then hand control back so a later manual pick sticks.
+    // Deep-tab requests are routed one level up (PlaceSheet owns both selections
+    // and maps by KEY); this param stays only so existing callers compile.
     androidx.compose.runtime.LaunchedEffect(place.id, openTab) {
-        if (openTab != null) {
-            onTabSelected(when (openTab) {
-                "Reviews" -> 1
-                "About" -> 2
-                else -> 0
-            })
-            onOpenTabConsumed()
-        }
         Unit
     }
     // A BARE bus stop (transit-category AND no rating, i.e. no real review content) shows only its
