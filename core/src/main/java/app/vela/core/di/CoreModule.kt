@@ -30,6 +30,9 @@ object CoreModule {
     fun okHttpClient(): OkHttpClient =
         OkHttpClient.Builder()
             .cookieJar(InMemoryCookieJar())
+            // Google-host requests over Chrome's network stack when the app installs it (Cronet);
+            // everything else, and any transport failure, stays on OkHttp. See GoogleTransport.
+            .addInterceptor(app.vela.core.net.GoogleTransport.hook)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .callTimeout(12, TimeUnit.SECONDS) // bound a single hung scrape so it can't stall a fan-out
@@ -69,6 +72,11 @@ object CoreModule {
         ObfRouteEngine(File(context.filesDir, "obf"))
 }
 
+/** A cookie jar the app can empty (Settings > Privacy "Start a new Google session"). */
+interface ResettableCookieJar : CookieJar {
+    fun reset()
+}
+
 /**
  * Minimal per-host cookie store so session cookies from the bootstrap GET ride
  * along on later requests — enough to behave like one browser. Deliberately
@@ -81,10 +89,18 @@ object CoreModule {
  * `CONSENT` with a `PENDING` value, a consent-redirect could still occur; the full
  * form-POST handshake is the follow-up if reports show the wall persisting.
  */
-private class InMemoryCookieJar : CookieJar {
+private class InMemoryCookieJar : ResettableCookieJar {
     private val store = HashMap<String, List<Cookie>>()
 
-    init {
+    init { seedConsent() }
+
+    @Synchronized
+    override fun reset() {
+        store.clear()
+        seedConsent()
+    }
+
+    private fun seedConsent() {
         val consent = listOf(
             // "consent recorded" — presence + valid form is what the wall checks.
             Cookie.Builder().domain("google.com").name("SOCS").value("CAESHAgBEhIaAB").path("/").build(),

@@ -11,7 +11,25 @@ are not repeated here.
 Headings and dates are the originals; entries are in the order they were written, which is
 roughly the order they were worked on.
 
+One caveat about that snapshot: a few entries were still open on 2026-09-21 and were carried
+over to `ROADMAP.md` as well (iOS, and under "Queued near-term" reroute on the phone first, the
+per-feature half of "Use Vela without Google", the neural voice's phonemizer, more places sources,
+the docs audit, the OpenStreetMap conversation). For those, the roadmap has the current version
+and this file only the wording of that day. Entries moved out of the roadmap after the prune are
+at the end, under their own heading, with the date they moved.
+
 ## Recently shipped
+- **Cronet for Google requests (2026-09-23).** Search, directions, place data and the batchexecute
+  RPCs go over Chromium's network stack (HTTP/2 and HTTP/3 like Chrome) instead of OkHttp, behind
+  calibration `useCronet`; OsmAnd's bundled protobuf is relocated at build time so both coexist.
+- **A place tap without hidden pages (2026-09-23).** Photos, reviews and details (popular times
+  included) come from one plain request each, with retries; the whole gallery pages at 10 per
+  request. Cronet turned out not to be needed for popular times: Google answers a place's first
+  request stripped and the repeat in full, through OkHttp as well.
+- **Landmark fame by language count (2026-09-23).** The places bake adds how many languages OSM
+  names a landmark in to its notability, so a famous small-footprint landmark (the Berliner
+  Fernsehturm) no longer loses its cell's slots to big parks; the widest zooms' anchors use the same
+  score. Was the roadmap's "Landmark fame beyond outline size".
 - **Transit on open GTFS (2026-07-12/13).** Transitous (community MOTIS) is the primary source for
   departure boards, canonical stop icons on the map (offline-cached per area), and the tap-through
   stop timeline, which now reads the actual GTFS run: passed stops gray out, moved times show
@@ -139,7 +157,7 @@ worth an offline drive past a signed exit to hear it).
   SPEC: share link resolves logged-out, page embeds a complete getlist request, parser
   unit-tested). First-class LOCAL lists shipped the same day (create/rename/icon+color,
   import INTO a list, per-place notes, file backup). Remaining: a share-TO-Vela intent
-  so the link never needs copying.
+  so the link never needs copying (shipped 2026-07-13, see the end of this file).
 
 - **D-pad polish** (base support SHIPPED + full-function sweep done 2026-07-07 - see
   `docs/dpad.md`): a real-device pass on D-pad hardware to tune the pan step / OK-hold
@@ -869,7 +887,8 @@ done so it *earns* trust rather than spends it:
   automated browser (same TLS/behavioral degradation OkHttp hits). The live gallery the app shows
   comes from the WebView DOM walk (categories, no dates). Dates would need the RPC answered inside
   a trusted non-automated session the keyless model can't mint - not pursued. The in-app date-join
-  plumbing stays ready + inert (see CLAUDE.md).
+  plumbing stays ready + inert (see CLAUDE.md). (Superseded 2026-09-23: the RPC was missing a
+  request header, not gated; see the end of this file.)
 - Ambient POI dot tiers like Google - DONE 2026-07-11: a circle layer under the ambient
   icons draws every place as a small category-colored dot; collision losers stay visible
   as dots and upgrade to icons on zoom-in.
@@ -883,3 +902,55 @@ done so it *earns* trust rather than spends it:
 - Performance pass: frame profiling of dense-marker pans and the POI sheet in/out churn.
 
 ---
+
+## Moved out of the roadmap after the prune
+
+- **Share TO Vela (shipped 2026-07-13; moved here 2026-09-25).** The roadmap's nav-polish list
+  still asked for "a share-TO-Vela intent so a Google Maps list link never needs copying" two
+  months after it shipped in the commit "Share to Vela from any app's share sheet". MainActivity
+  carries an `ACTION_SEND` `text/plain` filter and hands the text to `MapViewModel.openSharedText`:
+  a Google Maps share link runs through search (a list link imports, and since 2026-09-22 a
+  single-place short link opens the place), a `geo:` or maps URL opens like a deep link, and any
+  other text is searched as typed.
+- **Dense-city frame rate (2026-09-16; closed 2026-09-24, moved here 2026-09-25).** The roadmap
+  entry: with the Google places layer fixed (a higher GeoJSON maxzoom), what remained one zoom
+  step in was label placement, 43 fps against 60 with every symbol layer hidden, and the levers
+  were fewer Google labels and fewer basemap labels. The answer turned out to be one basemap
+  layer. Bisecting with `debug.vela.hide` on a Pixel 9 (2026-09-23), Midtown at about 200 ft
+  panned at 3 fps and at 60 with Liberty's `poi_r20` hidden. The one-set dial already hid the
+  `poi_r*` layers over archives that carry OSM's landmarks, but it only reached phones through a
+  calibration push from `main`, so on 2026-09-24 its compiled default became 20260923 (the world
+  rebake's rev). Measured on the 4a with the dial on: Midtown 36-58 fps panning (was 20-37),
+  Shinjuku 35-58 (was 20-45), Davis 52-59 (was 43-59), and Midtown at 100 ft 59 fps (0-25 with
+  the dial off). What stays open, why that one layer costs so much and what happens where it
+  still draws, is its own roadmap entry now.
+- **Photo dates were never gated (corrected 2026-09-23, moved here 2026-09-25).** The roadmap's
+  dead list said photo dates and menu photo dates were proven login-gated or bot-gated, and the
+  2026-07-11 menu-dates entry above says the same. Both were wrong: the `hspqX` gallery RPC answers
+  plain requests once they carry `x-maps-diversion-context-bin: CAE=` (`Calibration.rpcContext`,
+  remotely overridable), and a place tap's first photos now come from one dated request
+  (`placePhotos`). The date join
+  for the page walk runs again (`photoDatesRpc`, default 1). Q&A, contributor names and
+  per-review photos stay on the dead list.
+
+## 2026-09-25: delta updates on by default
+
+- **Turn delta updates on by default.** Done: `RegionUpdates` defaults to WIFI. The append-in-place
+  PMTiles patch shipped 2026-09-18 and was proven on a Pixel 9 the next day (a 94 KB patch against
+  a 3.3 MB archive, fingerprint checked, dead space reclaimed locally). The roadmap had asked for a
+  second device on a state-sized archive first; the maintainer made the call without it. The flip
+  starts `scheduleAutoRegionPatches` for every install that never touched the setting (a minute
+  after start, at most once per 20 h, patches only, never a full download); anyone who picked
+  "Never on its own" keeps it.
+
+## 2026-09-25: Cronet at Chrome's version
+
+- **Cronet at Chrome's version.** Done, without building anything: Chromium's official Cronet
+  builders publish a Release build of every Chrome for Android version to the public
+  `chromium-cronet` bucket, so the app now ships the build for the Android stable it claims
+  (155.0.8059.16), packed into one AAR by `scripts/build-cronet-aar.sh` and hosted on the
+  `cronet-runtime` release. The from-source `cronet-build.yml` (a Chromium checkout of tens of GB
+  on a public runner) never ran and was rewritten into the weekly packer. Maven had stopped at 143,
+  three signature algorithms short of current Chrome. The new jars are Java 25 class files, which
+  needed a newer R8 pinned on the buildscript classpath. `zstd` is still not offered: Cronet keeps
+  it behind a feature only a system flags file can turn on.

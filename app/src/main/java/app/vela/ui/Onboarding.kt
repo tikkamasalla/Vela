@@ -90,6 +90,19 @@ object Onboarding {
         // arms the location step, whose dismissal arms this one.
         val voicePromptDone = p.getBoolean("voice_prompt_done", false)
         showVoicePrompt.value = welcomeDone.value && !voicePromptDone && !VelaPiper.isReady(context)
+        // No first-run flow: the app opens straight onto the map. Welcome, location,
+        // notification and voice prompts never show; location can still be granted later
+        // (the locate FAB re-asks, or system settings). Donate and What's New are untouched.
+        p.edit()
+            .putBoolean("welcome_done", true)
+            .putBoolean("location_prompt_done", true)
+            .putBoolean("notif_prompt_done", true)
+            .putBoolean("voice_prompt_done", true)
+            .apply()
+        welcomeDone.value = true
+        showLocationPrompt.value = false
+        showNotifPrompt.value = false
+        showVoicePrompt.value = false
     }
 
     private fun hasLocation(context: Context): Boolean =

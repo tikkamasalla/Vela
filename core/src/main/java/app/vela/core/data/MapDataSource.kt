@@ -85,6 +85,11 @@ interface MapDataSource {
      *  Best-effort — returns empty if unavailable. */
     suspend fun reviews(featureId: String): List<Review> = emptyList()
 
+    /** The first page of the place's review feed in ONE request (the RPC the Reviews tab of Google's
+     *  own place page makes), in [hl]'s language. Null on failure; `limited` when Google is serving
+     *  its limited view. */
+    suspend fun reviewFeed(featureId: String, hl: String? = null, pageToken: String = ""): app.vela.core.data.google.parse.ReviewFeed? = null
+
     /** Imports a Google Maps SHARED LIST from its share link (maps.app.goo.gl/…):
      *  title, description and every place with the owner's note (issue #1).
      *  Best-effort — null when the link isn't a list or the fetch/parse fails. */
@@ -97,6 +102,13 @@ interface MapDataSource {
      *  NO dates), so this doubles as the DATE side of that join. Best-effort —
      *  empty (→ keep the preview) on failure. */
     suspend fun placePhotos(featureId: String): List<app.vela.core.model.Photo> = emptyList()
+
+    /** One gallery page (10 photos) and the cursor for the next; [pageToken] "" = the first page. */
+    /** The place's full details in ONE plain request: the focused "name address" search the details
+     *  page runs inside a WebView, parsed the same way. Null on failure. */
+    suspend fun placeDetails(place: app.vela.core.model.Place): app.vela.core.model.PlaceDetails? = null
+
+    suspend fun placePhotoPage(featureId: String, pageToken: String = ""): app.vela.core.data.google.parse.PhotoPage? = null
 
     suspend fun directions(
         origin: LatLng,

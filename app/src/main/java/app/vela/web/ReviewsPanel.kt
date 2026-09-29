@@ -56,7 +56,7 @@ class ReviewsPanelController {
     internal var webView: WebView? = null
     private fun js(code: String) {
         val wv = webView ?: return
-        wv.post { runCatching { wv.evaluateJavascript(code, null) } }
+        wv.post { runCatching { wv.evaluateJavascript(JsNames.of(code), null) } }
     }
     /** Server-side search across ALL reviews (empty = clear). */
     fun search(q: String) = js("try{window.velaSearch(" + org.json.JSONObject.quote(q) + ")}catch(e){}")
@@ -207,9 +207,11 @@ private fun buildPanelWebView(
     // Desktop UA: the desktop place panel is ~408 px wide — phone-width, and it's the layout the
     // scrapers are calibrated against. (A mobile UA deep-links to intent:// — non-starter.)
     WebViewIdentity.apply(wv.settings)
-    // Match Vela's SheetPalette exactly (Dark #1F1F1F / Light #FFFFFF) so the WebView surface
+    WebProxy.install(wv) // the POST shim, when the proxy is on (WebProxy)
+    SessionRotation.consumeCacheClear(wv) // the first Google WebView after a new session
+    // Match Vela's SheetPalette exactly (Dark #202124 / Light #FFFFFF) so the WebView surface
     // behind the page is the sheet color before the page even paints.
-    wv.setBackgroundColor(if (dark) 0xFF1F1F1F.toInt() else 0xFFFFFFFF.toInt())
+    wv.setBackgroundColor(if (dark) 0xFF202124.toInt() else 0xFFFFFFFF.toInt())
     // Scroll-sync: the panel lives inside the sheet's scrollable column and OWNS every vertical
     // gesture (disallow-intercept re-asserted on EVERY event — the Compose sheet resets a
     // once-per-gesture disallow and steals the stream otherwise). At a scroll BOUNDARY — reviews
@@ -353,12 +355,17 @@ private fun buildPanelWebView(
         false
     }
     var loaded = false
-    // Recovery for a page whose review feed Google withheld (issue #359): a plain reload first,
-    // then a reload on a FRESH anonymous session (all WebView cookies dropped, the consent
-    // cookies re-seeded), and only then the failure toast. The feed decision is per page load
+    // Recovery for a page whose review feed Google withheld (issue #359): two plain reloads, then
+    // the failure toast. (Until 2026-09-23 the second step dropped every WebView cookie for a fresh
+    // session; Google limits NEW anonymous sessions, so that threw away the aged one that works.) The feed decision is per page load
     // (five opens in a row on 2026-09-13 alternated between layouts), so a retry is not a long
     // shot, and a new session gets a new allotment.
     var stuckRetries = 0
+    // Issue #602: a signed-out session in Google's LIMITED view shows a few cards and a "More
+    // reviews (N)" button that fetches nothing (reproduced on Google's own page). Google limits NEW
+    // anonymous sessions (and ones it has flagged); an aged session gets the full feed. Logged once
+    // per open, nothing else: a fresh session would only be limited again.
+    var limitedRetried = false
     val bridge = object {
         @JavascriptInterface
         fun ready() { wv.post { onReady() } }
@@ -417,6 +424,23 @@ private fun buildPanelWebView(
         @JavascriptInterface
         fun fail() { panelDiag("failed: page never showed the reviews"); wv.post { onFail() } }
 
+        /** "More reviews" added nothing in 5 s. [claimed] is the total in the button's label (-1 when
+         *  it carries none), [calls] the feed requests the page had made by then. */
+        @JavascriptInterface
+        fun moreStalled(cards: Int, claimed: Int) {
+            val calls = feedCalls.get()
+            // Log only (2026-09-23). A fresh session does NOT escape the limited view: Google limits
+            // NEW anonymous sessions (a Pixel 9's brand-new WebView got it while the same phone's
+            // weeks-old one did not), so clearing cookies throws away the aged session that works.
+            wv.post {
+                if (!limitedRetried) {
+                    limitedRetried = true
+                    panelDiag("limited view: More reviews loaded nothing", "cards $cards of ${if (claimed >= 0) claimed else "?"}, feed requests $calls")
+                    GoogleStanding.markLimited(wv.context.applicationContext, "More reviews loaded nothing")
+                }
+            }
+        }
+
         /** A breadcrumb from the carve script (the See more reviews tap and what it loaded). */
         @JavascriptInterface
         fun note(summary: String, detail: String?) { panelDiag(summary.take(120), detail?.take(300)) }
@@ -427,20 +451,9 @@ private fun buildPanelWebView(
             wv.post {
                 when (stuckRetries++) {
                     0 -> { android.util.Log.w("VelaPanel", "feed withheld: reloading"); panelDiag("feed withheld: reloading"); loaded = false; wv.reload() }
-                    1 -> {
-                        android.util.Log.w("VelaPanel", "feed withheld again: fresh session + reload")
-                        panelDiag("feed withheld again: fresh session")
-                        val cm = android.webkit.CookieManager.getInstance()
-                        cm.removeAllCookies { _ ->
-                            // Re-seed the EU consent cookies the anonymous session needs (else Google
-                            // bounces the page to consent.google.com), then load fresh.
-                            cm.setCookie("https://www.google.com", "SOCS=CAESHAgBEhIaAB; path=/; domain=.google.com")
-                            cm.setCookie("https://www.google.com", "CONSENT=YES+; path=/; domain=.google.com")
-                            cm.flush()
-                            loaded = false
-                            wv.post { wv.loadUrl("https://www.google.com/maps?cid=$cid&hl=${WebReviewsFetcher.reviewsHl()}&gl=us") }
-                        }
-                    }
+                    // A second plain reload, not a cookie wipe: Google limits NEW anonymous sessions, so
+                    // a fresh one is the least likely to get the feed (measured 2026-09-23).
+                    1 -> { android.util.Log.w("VelaPanel", "feed withheld again: reloading"); panelDiag("feed withheld again: reloading"); loaded = false; wv.reload() }
                     else -> { panelDiag("feed withheld three times: giving up"); onFail() }
                 }
             }
@@ -464,7 +477,7 @@ private fun buildPanelWebView(
             wv.post { onPhotos(urls, captions, index) }
         }
     }
-    wv.addJavascriptInterface(bridge, "VelaPanel")
+    wv.addJavascriptInterface(bridge, JsNames.panel)
     wv.webViewClient = object : WebViewClient() {
         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
             // The review feed is a batchexecute RPC (rpcids=qv9Egd, 2026-09-13); one line per call
@@ -481,7 +494,7 @@ private fun buildPanelWebView(
             if (request != null && blocked(request)) {
                 return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
             }
-            return null
+            return WebProxy.intercept(request) // telemetry blocking (a setting) and the proxy (calibration `webProxy`)
         }
 
         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -502,7 +515,7 @@ private fun buildPanelWebView(
             // listener above receives events (harmless under touch — it's the only interactive
             // thing in the full-screen dialog besides the back arrow, which BACK still reaches).
             if (fullScreen) view?.requestFocus()
-            view?.evaluateJavascript(carveScript(dark, fullScreen), null)
+            view?.evaluateJavascript(JsNames.of(carveScript(dark, fullScreen)), null)
         }
     }
     // Follows the app's language like the inline scraper (issue #278; the full page caught up on
@@ -527,7 +540,8 @@ private fun buildPanelWebView(
             return true
         }
     }
-    panelDiag("open hl=${WebReviewsFetcher.reviewsHl()} full=$fullScreen", "cid=$cid")
+    panelDiag("open hl=${WebReviewsFetcher.reviewsHl()} region=${DiagRegion.of(ctx)} full=$fullScreen webview=${androidx.webkit.WebViewCompat.getCurrentWebViewPackage(ctx)?.versionName}", "cid=$cid")
+    app.vela.core.net.GoogleUsage.record("page: all reviews")
     wv.loadUrl("https://www.google.com/maps?cid=$cid&hl=${WebReviewsFetcher.reviewsHl()}&gl=us")
     return wv
 }
@@ -556,7 +570,7 @@ private fun buildPanelWebView(
 private fun carveScript(dark: Boolean, fullScreen: Boolean): String {
     // Vela's own sheet color (SheetPalette Dark/Light) — the panel matches it EXACTLY so there's
     // no seam with the surrounding place sheet.
-    val bg = if (dark) "#1f1f1f" else "#ffffff"
+    val bg = if (dark) "#202124" else "#ffffff"
     // Dark = a scoped invert on the PANEL CONTENT ONLY (main), NOT its background. The Vela color
     // lives on <body> (which the filter doesn't touch — it's on main), and main + every ancestor
     // are made transparent so that color is the panel's backdrop; only Google's content inverts.
@@ -592,8 +606,11 @@ private fun carveScript(dark: Boolean, fullScreen: Boolean): String {
               var l=velaNoName(((b.getAttribute('aria-label')||'')+' '+(b.textContent||'')).trim());
               if(!(VW.more && VW.more.test(l) && VW.review && VW.review.test(l))) return;
               var before=velaCardCount();
-              VelaPanel.note('more reviews tapped', 'cards '+before);
-              setTimeout(function(){ try{ VelaPanel.note('more reviews after 5 s', 'cards '+before+' -> '+velaCardCount()); }catch(e){} }, 5000);
+              // The total the button names, "More reviews (1,091)": digits only, any separator.
+              var m=l.match(/[(（]\s*([\d.,\s\u00a0\u202f]+)\s*[)）]/); var claimed=m?parseInt(m[1].replace(/\D/g,''),10):-1;
+              VelaPanel.note('more reviews tapped', 'cards '+before+(claimed>=0?' of '+claimed:''));
+              setTimeout(function(){ try{ var now=velaCardCount(); VelaPanel.note('more reviews after 5 s', 'cards '+before+' -> '+now);
+                if(now<=before) VelaPanel.moreStalled(now, isNaN(claimed)?-1:claimed); }catch(e){} }, 5000);
             }catch(e){}
           }, true); }
           // A star widget in any language: its aria-label leads with the rating and names a star.

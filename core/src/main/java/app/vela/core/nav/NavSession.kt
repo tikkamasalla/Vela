@@ -77,6 +77,7 @@ class NavSession @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var destination: LatLng? = null
     private var lastRecheckMs = 0L
+    private var recheckSpread = app.vela.core.util.Jitter.factor()
     // Fast-heal pacing for a DEGRADED route (abbreviated steps / no live traffic): reference of
     // the route the counter was armed for + how many short-interval rechecks it has spent.
     private var degradedRouteRef: Route? = null
@@ -283,7 +284,9 @@ class NavSession @Inject constructor(
      *  IMMEDIATELY (marks null until the new route lands), so even a failed fetch keeps it -
      *  the next reroute/recheck routes through it once the network recovers. */
     fun addStop(stop: NavStop, loc: LatLng) {
-        val remaining = synchronized(stopLock) { stops.drop(passedStops) }
+        // VISIBLE stops only: setStops puts the silent detour vias back itself (withSilentVias), so
+        // passing them here routed through every detour point twice.
+        val remaining = synchronized(stopLock) { stops.drop(passedStops).filter { !it.silent } }
         setStops(listOf(stop) + remaining, loc, "add stop mid-nav → ${stop.label}", "stop-added")
     }
 
@@ -602,7 +605,9 @@ class NavSession @Inject constructor(
         }
         val degraded = currentRoute != null && (!currentRoute.hasRealSteps || !currentRoute.hasLiveTraffic)
         val fastHeal = degraded && degradedFastRechecks < DEGRADED_FAST_TRIES
-        val interval = if (fastHeal) DEGRADED_RECHECK_INTERVAL_MS else RECHECK_INTERVAL_MS
+        // Spread by +/-25%, redrawn after every recheck: an exact 120 s beat is a rhythm every
+        // install shares (see Jitter).
+        val interval = ((if (fastHeal) DEGRADED_RECHECK_INTERVAL_MS else RECHECK_INTERVAL_MS) * recheckSpread).toLong()
         if (now - lastRecheckMs < interval) return
         if (nav.offRoute || nav.remainingDistance < MIN_RECHECK_DISTANCE_M) return
         if (recheckJob?.isActive == true) return
@@ -610,6 +615,7 @@ class NavSession @Inject constructor(
         if (_state.value.fasterRoute != null) return
         val dest = destination ?: return
         lastRecheckMs = now
+        recheckSpread = app.vela.core.util.Jitter.factor()
         if (fastHeal) degradedFastRechecks++
         // Named remainingStops (not `remaining`) — the launch body below declares `remaining` for the
         // remaining DURATION, which would shadow this and hand a future edit seconds instead of stops.
@@ -710,6 +716,8 @@ class NavSession @Inject constructor(
             if (trafficAware && candidate.hasRealSteps && saving > FASTER_THRESHOLD_S && plausible) {
                 note("recheck: offering faster route, saves ${saving.toInt()} s (${candidate.maneuvers.size} steps)")
                 _state.update { it.copy(fasterRoute = candidate, fasterSavingSeconds = saving) }
+                voice.fasterRouteChime()
+                kotlinx.coroutines.delay(FASTER_CHIME_LEAD_MS) // let the chime finish before the voice
                 voice.speak(
                     app.vela.core.i18n.NavStringsRegistry.current()
                         .fasterRouteAvailable((saving / 60).toInt().coerceAtLeast(1)),
@@ -999,6 +1007,7 @@ class NavSession @Inject constructor(
         const val SAME_COURSE_M = 250.0
         const val MIN_RECHECK_DISTANCE_M = 1_500.0 // don't bother near the destination
         const val FASTER_THRESHOLD_S = 90.0        // only offer if it saves real time
+        const val FASTER_CHIME_LEAD_MS = 450L       // the faster-route chime, then the spoken offer
         const val REROUTE_COOLDOWN_MS = 10_000L    // min gap between ADOPTED reroutes (no reroute storms)
         // Deadline on one reroute FETCH: generous next to Google's 1-3 s but far under the retry
         // ladders' worst case; past it the position the request was computed from is stale anyway.

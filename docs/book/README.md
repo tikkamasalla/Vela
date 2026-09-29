@@ -8,8 +8,9 @@ what Vela is; [FEATURES](../../FEATURES.md) is the running changelog; [FAQ](../F
 the ten questions people ask first; [PRIVACY](../../PRIVACY.md) is the request-by-request
 accounting. This book is for the person who wants to know *why the map decided that*: which
 dataset a pin came from, what made one shop win the label, when the data is rebuilt, what the
-thresholds are. Where the book and the spec disagree about a number, the spec is right and the
-book is a bug.
+thresholds are. The code is the final authority: where the book disagrees with it, the book is a
+bug, and where the book and the spec disagree about a number, check the code before trusting
+either.
 
 Every chapter follows the same four beats, so you can skim one and know where to look in the
 next:
@@ -29,10 +30,12 @@ next:
 | 4 | [Navigation](04-navigation.md) | The per-fix loop, off-route and rerouting, traffic rechecks, and the pause |
 | 5 | [Routing](05-routing.md) | Which engine answers, how Google's traffic reaches an open route, stops, avoids, offline and bike routing |
 | 6 | [Search](06-search.md) | What a typed query is sent to, the autocomplete, local and contact suggestions, intents, offline and Google-off search |
-| 7 | [Talking to Google](07-talking-to-google.md) | The keyless scrape, the browser identity, signed calibration, the hidden WebViews, and the no-Google switch |
+| 7 | [Talking to Google](07-talking-to-google.md) | The keyless scrape, the browser identity, signed calibration, the hidden WebViews, Google sessions and the limited view, the one-request place data and its rollback switches, and the no-Google switch |
 | 8 | [Offline](08-offline.md) | What a region download holds, what works with no signal, borders, storage and updates |
 | 9 | [Transit](09-transit.md) | Departure boards, canonical stops, the stop-list tap-through, transit directions and guidance |
 | 10 | [Android Auto and the car screen](10-android-auto.md) | What runs on the head unit, the snapshot map, the screens, and the install gate |
+| 11 | [The drive's chrome](11-drive-chrome.md) | Street and exit callouts, the road-ahead bar, whose stop sign it is, the route line, the parked-drive idle, stops mid-drive |
+| 12 | [Releases](12-releases.md) | Canary, nightly and stable, version codes and per-chip APKs, the in-app updater, What's new, Obtainium and the F-Droid repo |
 
 ## What the remaining chapters owe
 
@@ -44,17 +47,9 @@ are, and how that compares with Google's; how the day and night styles are chose
 buildings cost and why they are on by default; how the map behaves on a high-refresh screen and
 what the frame budget actually goes on.
 
-**The drive's chrome** (planned): the road-ahead bar, what it will and will not show, and why it
-is portrait-only; the street and exit callouts, where they are placed and when they disappear;
-how a stop sign or traffic light on a crossing street is told apart from one on your road; the
-two-tap "add this place as a stop" and why it is opt-in.
-
 **The route chooser** (planned): the Google-style picker and the classic panel, what each shows,
 how alternates are picked and labeled, what the camera and toll badges mean, and what the steps
 preview is for.
-
-**Releases** (planned): canary, nightly and stable, what promotes what and when, and how the
-in-app updater picks a build.
 
 **Voices and listening** (planned): what a Vela voice is and why one voice speaks one language,
 what happens when the app language and the voice disagree, the three on-device dictation engines

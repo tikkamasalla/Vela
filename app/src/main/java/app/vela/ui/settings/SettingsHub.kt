@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Map
@@ -101,6 +102,7 @@ internal fun SettingsHub(
             SettingsSection.OFFLINE to stringResource(R.string.settings_offline),
             SettingsSection.SAVED_PLACES to stringResource(R.string.settings_saved_places),
             SettingsSection.PRIVACY to stringResource(R.string.settings_privacy),
+            SettingsSection.PERFORMANCE to stringResource(R.string.settings_performance),
             SettingsSection.DIAGNOSTICS to stringResource(R.string.settings_diagnostics),
             SettingsSection.ABOUT to stringResource(R.string.settings_about),
         )
@@ -216,6 +218,13 @@ internal fun SettingsHub(
             onClick = { onOpen(SettingsSection.PRIVACY, null) },
         )
         HubRow(
+            icon = Icons.Outlined.Speed,
+            title = stringResource(R.string.settings_performance),
+            subtitle = stringResource(R.string.settings_hub_performance_sub),
+            modifier = rowModifier(SettingsSection.PERFORMANCE, first = false),
+            onClick = { onOpen(SettingsSection.PERFORMANCE, null) },
+        )
+        HubRow(
             icon = Icons.Outlined.BugReport,
             title = stringResource(R.string.settings_diagnostics),
             subtitle = stringResource(R.string.settings_hub_diagnostics_sub),
@@ -312,7 +321,6 @@ private val SEARCH_INDEX: List<Pair<Int, SettingsSection>> = listOf(
     R.string.settings_places_source_google to SettingsSection.PLACES,
     R.string.settings_places_source_both to SettingsSection.PLACES,
     R.string.settings_places_lookup to SettingsSection.PLACES,
-    R.string.settings_osm_businesses to SettingsSection.PLACES,
     R.string.settings_show_civic to SettingsSection.PLACES,
     R.string.settings_show_transit_stops to SettingsSection.PLACES,
     R.string.settings_poi_icon_size to SettingsSection.PLACES,
@@ -363,10 +371,16 @@ private val SEARCH_INDEX: List<Pair<Int, SettingsSection>> = listOf(
     R.string.settings_google_free to SettingsSection.PRIVACY,
     R.string.settings_google_free_links to SettingsSection.PRIVACY,
     R.string.settings_live_rechecks to SettingsSection.NAVIGATION,
+    R.string.settings_google_session to SettingsSection.PRIVACY,
+    R.string.settings_block_google_telemetry to SettingsSection.PRIVACY,
+    R.string.settings_google_usage to SettingsSection.PRIVACY,
     R.string.settings_clear_history to SettingsSection.PRIVACY,
     // Diagnostics
     R.string.settings_share_diagnostics to SettingsSection.DIAGNOSTICS,
-    R.string.settings_texture_render to SettingsSection.DIAGNOSTICS,
+    R.string.settings_texture_render to SettingsSection.PERFORMANCE,
+    R.string.settings_speech_preload to SettingsSection.PERFORMANCE,
+    R.string.settings_full_place_load to SettingsSection.PERFORMANCE,
+    R.string.settings_performance to SettingsSection.PERFORMANCE,
     R.string.settings_save_trips to SettingsSection.DIAGNOSTICS,
     R.string.settings_building_debug to SettingsSection.DIAGNOSTICS,
     R.string.settings_nav_trace to SettingsSection.DIAGNOSTICS,

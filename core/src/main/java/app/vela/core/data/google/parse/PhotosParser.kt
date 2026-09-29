@@ -28,9 +28,29 @@ import kotlinx.serialization.json.jsonArray
  * (Don't "fix" this by dropping the filter — you'll show non-loading Street View
  * tiles as photos, which was the "placeholders everywhere" regression.)
  */
+/** One page of the gallery: the photos, Google's total for the place, and the cursor for the next
+ *  page (null on the last). Pages are 10 whatever count the request asks for (measured 2026-09-23). */
+data class PhotoPage(val photos: List<Photo>, val nextToken: String?)
+
 object PhotosParser {
     private val json = Json { ignoreUnknownKeys = true }
     private val SIZE_SUFFIX = Regex("=w\\d+-h\\d+.*$")
+
+    /** [parse] plus the next page's cursor, payload[5] (it goes back in the request at [4][2][2], see
+     *  GoogleMapsDataSource). payload[1] is NOT the place's photo total: it read 201 for a 70-review
+     *  convenience store and a department store alike (2026-09-25), so nothing reads it. */
+    fun parsePage(rawBody: String): PhotoPage {
+        val photos = parse(rawBody)
+        val start = rawBody.indexOf("[[\"wrb.fr\"")
+        val payload = if (start < 0) null else extractArray(rawBody, start)?.let { arr ->
+            runCatching { json.parseToJsonElement(arr).jsonArray }.getOrNull()
+                ?.firstOrNull { el -> (el as? JsonArray)?.getOrNull(0).let { it is JsonPrimitive && it.content == "wrb.fr" } }
+                ?.let { row -> ((row as JsonArray).getOrNull(2) as? JsonPrimitive)?.content }
+                ?.let { runCatching { json.parseToJsonElement(it).jsonArray }.getOrNull() }
+        }
+        val next = (payload?.getOrNull(5) as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() && photos.isNotEmpty() }
+        return PhotoPage(photos, next)
+    }
 
     fun parse(rawBody: String): List<Photo> {
         val start = rawBody.indexOf("[[\"wrb.fr\"")

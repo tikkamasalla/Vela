@@ -2,7 +2,7 @@ name: Open places overlays
 
 # Bakes the open places layer (Overture Maps Places -> PMTiles) per region from tools/places-regions.json
 # and publishes the archives + places-overlay-manifest.json on the `places-overlays` release. ADDITIVE and
-# reversible: its own release + manifest; delete the release to revert. Manual only while the layer is beta.
+# reversible: its own release + manifest; delete the release to revert. Monthly crons (shards a and b) plus a nightly seventh of the catalog; manual dispatch still works.
 
 on:
   schedule:
@@ -23,9 +23,9 @@ on:
         required: false
         default: ""
       release:
-        description: Overture release
+        description: "Overture release to pin (blank = the newest in the public bucket, like the scheduled runs)"
         required: false
-        default: "2026-08-19.0"
+        default: ""
       shard:
         description: "Which half of the catalog to bake when `only` is blank: a = first half by id, b = second half, blank = all (fails past 256 regions, the matrix cap)"
         required: false

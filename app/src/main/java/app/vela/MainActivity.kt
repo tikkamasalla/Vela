@@ -147,11 +147,110 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         app.vela.ui.AppVisibility.foreground.value = true
+        // Low-power lock overlay (Settings > Navigation): push the live turn snapshot
+        // while navigating so screen-off over the lock screen shows the black overlay.
+        lifecycleScope.launch {
+            vm.state.collect { s ->
+                if (s.navigating && s.activeRoute != null) {
+                    app.vela.ui.LowPowerWatcher.attach(this@MainActivity)
+                    val route = s.activeRoute!!
+                    val m = route.maneuvers.getOrNull(s.nav.stepIndex)
+                    val road = m?.ref?.takeIf { it.isNotBlank() } ?: m?.road?.takeIf { it.isNotBlank() }
+                    // The road you are ON: the leg entered by the last-passed maneuver (never the
+                    // upcoming one — same source as barRoadName / the floating pill). Renames
+                    // already passed on that leg apply, so the overlay agrees with the bar.
+                    val onRoad = route.maneuvers.getOrNull(s.nav.stepIndex - 1)?.let { prev ->
+                        val (name, ref) = prev.roadAt(prev.distanceMeters - s.nav.distanceToNextManeuver)
+                        ref?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() }
+                    }
+                    // The overlay's live map needs the drive itself: the route polyline
+                    // (decimated to the intent cap), progress, the puck fix, and the full
+                    // banner/ETA fields — Google's MinMode. The next maneuver + the driven
+                    // road's ref ride along so the banner's "then" row and shield match.
+                    val next = route.maneuvers.getOrNull(s.nav.stepIndex + 1)
+                    val drivenRef = route.maneuvers.getOrNull(s.nav.stepIndex - 1)?.let { prev ->
+                        val (_, ref) = prev.roadAt(prev.distanceMeters - s.nav.distanceToNextManeuver)
+                        ref?.takeIf { it.isNotBlank() }
+                    }
+                    app.vela.ui.LowPowerWatcher.push(
+                        app.vela.ui.LowPowerSnapshot(
+                            distanceText = app.vela.ui.formatDistance(s.nav.distanceToNextManeuver),
+                            instruction = s.maneuverText,
+                            road = road,
+                            etaText = remainingText(s.nav.remainingDuration) + " · " +
+                                app.vela.ui.formatDistance(s.nav.remainingDistance),
+                            locationText = onRoad?.let { "on $it" }.orEmpty(),
+                            maneuverOrdinal = m?.type?.ordinal ?: -1,
+                            routeLat = decimatedLat(route),
+                            routeLng = decimatedLng(route),
+                            traveledM = s.nav.traveledM,
+                            myLat = s.myLocation?.lat ?: Double.NaN,
+                            myLng = s.myLocation?.lng ?: Double.NaN,
+                            bearing = s.myBearing,
+                            stepIndex = s.nav.stepIndex,
+                            offRoute = s.nav.offRoute,
+                            maneuverRef = m?.ref,
+                            maneuverRoad = m?.road,
+                            laneHint = m?.laneHint,
+                            nextInstruction = next?.instruction,
+                            nextManeuverOrdinal = next?.type?.ordinal ?: -1,
+                            nextDistanceM = m?.distanceMeters,
+                            currentRef = drivenRef,
+                            remainingDistanceM = s.nav.remainingDistance,
+                            remainingSeconds = s.nav.remainingDuration,
+                            trafficRatio = route.trafficRatio,
+                            destName = s.arrivedLabel,
+                            destAddress = s.navDestAddress,
+                            distToNextM = s.nav.distanceToNextManeuver,
+                            basemapArchive = s.basemapArchive,
+                        ),
+                    )
+                    // The overlay is already up (screen off): stream each state tick to it
+                    // so the map, banner and ETA stay live without waking the main screen.
+                    app.vela.ui.LowPowerWatcher.latestSnapshot()?.let {
+                        app.vela.ui.LowPowerActivity.broadcastUpdate(this@MainActivity, it)
+                    }
+                } else {
+                    app.vela.ui.LowPowerWatcher.clear()
+                    app.vela.ui.LowPowerWatcher.detach(this@MainActivity)
+                }
+            }
+        }
     }
 
     override fun onStop() {
         super.onStop()
         app.vela.ui.AppVisibility.foreground.value = false
+    }
+
+    /** Remaining-time + arrival clock for the lock overlay, Google-style ("12 min · 7:42 PM"). */
+    private fun remainingText(remainingSeconds: Double): String {
+        val mins = (remainingSeconds / 60.0).toLong().coerceAtLeast(0)
+        val clock = app.vela.ui.formatArrivalClock(remainingSeconds)
+        return "$mins min · $clock"
+    }
+
+    /** Evenly decimate a route polyline to the overlay intent cap (see
+     *  LowPowerSnapshot.MAX_ROUTE_POINTS): every Nth point plus the endpoint, so
+     *  a long route still spans its full length, just coarser off-screen. */
+    private fun decimatedLat(route: app.vela.core.model.Route): DoubleArray {
+        val pts = route.polyline
+        val cap = app.vela.ui.LowPowerSnapshot.MAX_ROUTE_POINTS
+        if (pts.size <= cap) return pts.map { it.lat }.toDoubleArray()
+        val step = (pts.size - 1).toDouble() / (cap - 1)
+        return DoubleArray(cap) { i ->
+            if (i == cap - 1) pts.last().lat else pts[(i * step).toInt()].lat
+        }
+    }
+
+    private fun decimatedLng(route: app.vela.core.model.Route): DoubleArray {
+        val pts = route.polyline
+        val cap = app.vela.ui.LowPowerSnapshot.MAX_ROUTE_POINTS
+        if (pts.size <= cap) return pts.map { it.lng }.toDoubleArray()
+        val step = (pts.size - 1).toDouble() / (cap - 1)
+        return DoubleArray(cap) { i ->
+            if (i == cap - 1) pts.last().lng else pts[(i * step).toInt()].lng
+        }
     }
 
     /** Vela registers for `geo:` URIs and Google-Maps web links so it can be the

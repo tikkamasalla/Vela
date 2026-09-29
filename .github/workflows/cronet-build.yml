@@ -1,0 +1,75 @@
+name: Cronet runtime
+
+# Publishes Chromium's own prebuilt Cronet for a Chrome for Android version as one AAR on the
+# `cronet-runtime` release (an INFRA release: never delete it; CI and baseline-profile fetch the
+# version pinned in gradle.properties `vela.cronetVersion` from here). The binaries come from the
+# public `chromium-cronet` bucket Chromium's official Cronet builders upload to; nothing is
+# compiled. scripts/build-cronet-aar.sh does the packing, the same script CI falls back to when the
+# release does not have the pinned version yet.
+#
+# Weekly it publishes the current Android stable, so the AAR is waiting when the claimed Chrome
+# major moves; switching the app to it is a one-line bump of `vela.cronetVersion`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Chrome for Android version (blank = current stable)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '20 6 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cronet-runtime
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the version
+        id: v
+        run: |
+          v='${{ github.event.inputs.version }}'
+          if [ -z "$v" ]; then
+            v=$(curl -fsS 'https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Android&num=1' \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["version"])')
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Cronet $v (pinned in gradle.properties: $(sed -n 's/^vela.cronetVersion=//p' gradle.properties))" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Already published?
+        id: have
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view cronet-runtime --json assets -q '.assets[].name' 2>/dev/null | grep -qx "cronet-${{ steps.v.outputs.version }}.aar"; then
+            echo "yes=1" >> "$GITHUB_OUTPUT"
+            echo "Already on the release; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Pack
+        if: steps.have.outputs.yes != '1'
+        run: |
+          bash scripts/build-cronet-aar.sh "${{ steps.v.outputs.version }}" out
+          test "$(stat -c%s out/cronet-${{ steps.v.outputs.version }}.aar)" -gt 10000000
+          sha256sum out/*.aar | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish
+        if: steps.have.outputs.yes != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view cronet-runtime >/dev/null 2>&1; then
+            gh release create cronet-runtime --prerelease --title "Cronet runtime (infrastructure)" \
+              --notes "Chromium's own prebuilt Cronet, one AAR per Chrome for Android version, fetched by CI at build time. Infrastructure file hosting: do not delete."
+          fi
+          gh release upload cronet-runtime "out/cronet-${{ steps.v.outputs.version }}.aar"
+          echo "Published. To ship it, set \`vela.cronetVersion=${{ steps.v.outputs.version }}\` in gradle.properties." >> "$GITHUB_STEP_SUMMARY"

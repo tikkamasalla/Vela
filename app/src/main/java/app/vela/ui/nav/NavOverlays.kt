@@ -147,15 +147,37 @@ fun ManeuverBanner(
     onPreviewNext: () -> Unit = {},
     onPreviewPrev: () -> Unit = {},
     onExitPreview: () -> Unit = {},
+    // MinMode: pure black banner + white text + no lane diagram (Google's
+    // black/white power-saving look). The "then" row and shields stay.
+    minMode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // Swiping the banner left/right walks the upcoming steps (Google-style): the
     // card grays out, shows that step, and the map's preview marker + camera move
     // there (driven by previewStepIndex). Tapping it resumes live guidance.
-    val container = if (previewing) MaterialTheme.colorScheme.surfaceVariant
-    else MaterialTheme.colorScheme.primaryContainer
-    val content = if (previewing) MaterialTheme.colorScheme.onSurfaceVariant
-    else MaterialTheme.colorScheme.onPrimaryContainer
+    // Google's banner is a DARK FREEWAY GREEN (#00654F, pixel-sampled off the
+    // app): white ink, Roboto (the app font — no brand font on the banner).
+    // Preview keeps the grey surfaceVariant so a swiped-ahead step never reads
+    // as live guidance. MinMode is pure black/white instead.
+    val container = when {
+        minMode -> androidx.compose.ui.graphics.Color.Black
+        previewing -> MaterialTheme.colorScheme.surfaceVariant
+        else -> NavBannerGreen
+    }
+    val content = if (previewing && !minMode) MaterialTheme.colorScheme.onSurfaceVariant
+    else androidx.compose.ui.graphics.Color.White
+    // The detached "then" strip under the card is darker than the banner (Google's reads
+    // as a dimmer tab); preview/minMode follow the main card's own treatment.
+    val thenContainer = when {
+        minMode -> androidx.compose.ui.graphics.Color.Black
+        previewing -> MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val thenContent = when {
+        minMode -> androidx.compose.ui.graphics.Color.White
+        previewing -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     // The card tracks your finger as you drag (translationX = offsetX); on release
     // past a threshold it slides the rest of the way out, swaps to the next/prev
     // step, then the new card slides in from the opposite edge — like flicking a
@@ -172,8 +194,11 @@ fun ManeuverBanner(
     // the 54dp glyph + full paddings buried the map on sub-500dp-tall displays, so the banner
     // shrinks its chrome there. Ordinary phones and tall head units never trip the gate.
     val compact = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 500
+    // Main card + detached "then" strip share the caller's slot, so measured
+    // offsets below (compass, chips) stay right.
+    Column(modifier) {
     Card(
-        modifier
+        Modifier
             .fillMaxWidth()
             .graphicsLayer { translationX = offsetX.value }
             .pointerInput(Unit) {
@@ -266,7 +291,7 @@ fun ManeuverBanner(
                             ?.uppercase()?.takeIf { c -> c.isNotBlank() && signs.none { it.label == c } }
                         if (cur != null) {
                             Spacer(Modifier.weight(1f))
-                            SignChip(Sign(isExit = false, label = cur))
+                            SignChip(Sign(isExit = false, label = cur), onBanner = true, minMode = minMode)
                         }
                     }
                     if (signs.isNotEmpty()) {
@@ -274,7 +299,7 @@ fun ManeuverBanner(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier.padding(top = 2.dp, bottom = 1.dp),
-                        ) { signs.forEach { SignChip(it) } }
+                        ) { signs.forEach { SignChip(it, onBanner = true, minMode = minMode) } }
                     }
                     // Headline = the SPOKEN form of the instruction (primary sign destination
                     // only), so the card and the voice can never disagree; the chips row above
@@ -327,45 +352,14 @@ fun ManeuverBanner(
             // otherwise the arrows sit there for miles telling you to "be in the right lane" for an exit
             // way ahead, which is just noise. The distance gate covers BOTH paths (the count-based hint
             // was just as noisy). In step-preview (swiping ahead) always show, since you're inspecting a step.
-            if (previewing || distanceMeters <= laneShowM) {
+            // MinMode shows no lane diagram (Google's refs have none — arrow + text only).
+            if (!minMode && (previewing || distanceMeters <= laneShowM)) {
                 if (lanes.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
-                    LaneDiagram(lanes, type)
+                    LaneDiagram(lanes, type, on = content)
                 } else laneHint?.let {
                     Spacer(Modifier.height(10.dp))
-                    LaneGuide(it, type)
-                }
-            }
-            // Compound "then <next>" preview — only when the next maneuver CLOSELY follows this one
-            // (Google shows it only for back-to-back turns like "exit, then keep right") AND we're
-            // actually APPROACHING this one: gated on the gap alone, an exit 12 km ahead with a merge
-            // 300 m after it kept "then ⤵ Merge onto I-80 E" on the banner for the whole 12 km — the
-            // same noise the lane gate was added to kill. Preview always shows (inspecting a step).
-            if (nextText != null && nextType != null && isCompoundNext(nextDistanceMeters) &&
-                (previewing || distanceMeters <= laneShowM)
-            ) {
-                Spacer(Modifier.height(8.dp))
-                val nextSigns = roadSigns(nextText, nextRef)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        stringResource(R.string.nav_compound_then),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = content.copy(alpha = 0.7f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        if (isRoundabout(nextType)) rememberRoundaboutGlyph(nextRoundabout) else maneuverIcon(nextType),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    nextSigns.firstOrNull()?.let { SignChip(it); Spacer(Modifier.width(6.dp)) }
-                    // Short form: the chip beside it names the route, and the full sign used to
-                    // ellipsize arbitrarily mid-destination on this single-line row.
-                    Text(
-                        app.vela.core.i18n.NavStringsRegistry.current().repeatShort(nextText),
-                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                    LaneGuide(it, type, on = content)
                 }
             }
             if (previewing) {
@@ -378,11 +372,51 @@ fun ManeuverBanner(
             }
         }
     }
+        // Detached Google-style "then" strip: its own smaller, darker tab under the main
+        // card — just "then <arrow> <full instruction>", no shield chip, no distance.
+        // Same compound + approach gates as the old inline row.
+        if (nextText != null && nextType != null && isCompoundNext(nextDistanceMeters) &&
+            (previewing || distanceMeters <= laneShowM)
+        ) {
+            Card(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = thenContainer, contentColor = thenContent),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.nav_compound_then),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = thenContent.copy(alpha = 0.7f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        if (isRoundabout(nextType)) rememberRoundaboutGlyph(nextRoundabout) else maneuverIcon(nextType),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        nextText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
 }
 
 // Show the lane diagram only within this distance of the maneuver (~0.5 mi) — beyond it the arrows are
 // just noise telling you to pick a lane for an exit miles ahead.
 private const val LANE_SHOW_M = 800.0
+/** Google's nav-banner freeway green, pixel-sampled off the Maps app (#00654F). */
+internal val NavBannerGreen = androidx.compose.ui.graphics.Color(0xFF00654F)
 // The nav bottom bar as a drag handle (see NavControls): how far it must be lifted to commit to
 // the step sheet, how far it may lift at all, and the upward fling speed that commits regardless.
 private const val NAV_BAR_LIFT_COMMIT_DP = 56
@@ -432,9 +466,17 @@ internal fun roadSigns(text: String, explicitRef: String? = null): List<Sign> {
 }
 
 @Composable
-internal fun SignChip(sign: Sign) {
+internal fun SignChip(sign: Sign, onBanner: Boolean = false, minMode: Boolean = false) {
+    // White on the green banner + in step rows; the theme ink only when SignChip is
+    // used OFF a sheet surface that already supplies it (default keeps callers unchanged).
+    // MinMode is monochrome: the green exit tab becomes a white outline instead.
+    val bannerInk = androidx.compose.ui.graphics.Color.White
     if (sign.isExit) {
-        Surface(color = Color(0xFF1E7E34), shape = RoundedCornerShape(4.dp)) {
+        Surface(
+            color = if (minMode) Color.Transparent else Color(0xFF1E7E34),
+            shape = RoundedCornerShape(4.dp),
+            border = if (minMode) BorderStroke(1.dp, Color.White) else null,
+        ) {
             Text(
                 sign.label,
                 color = Color.White,
@@ -445,11 +487,12 @@ internal fun SignChip(sign: Sign) {
         }
     } else {
         // Real highway-shield shapes (interstate / US-route / state marker), inferred from the
-        // ref; falls back to the plain bordered chip for anything unrecognized.
+        // ref; falls back to the plain bordered chip for anything unrecognized. `onBanner`
+        // carries the banner content color (white); elsewhere it defaults to the theme ink.
         RouteShield(
             sign.label,
-            ink = MaterialTheme.colorScheme.onPrimaryContainer,
-            dim = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+            ink = if (onBanner) bannerInk else MaterialTheme.colorScheme.onPrimaryContainer,
+            dim = (if (onBanner) bannerInk else MaterialTheme.colorScheme.onPrimaryContainer).copy(alpha = 0.7f),
         )
     }
 }
@@ -478,10 +521,10 @@ private fun FitText(text: String, style: androidx.compose.ui.text.TextStyle, col
 }
 
 @Composable
-private fun LaneGuide(hint: String, type: ManeuverType) {
+private fun LaneGuide(hint: String, type: ManeuverType, on: Color = MaterialTheme.colorScheme.onPrimaryContainer) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Surface(
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.14f),
+            color = on.copy(alpha = 0.14f),
             shape = RoundedCornerShape(6.dp),
         ) {
             Row(
@@ -780,12 +823,14 @@ fun NavControls(
                 )
             },
         // Match the banner's treatment: generous radius + shadow, a floating pill not a bar.
+        // Google's bar is OLED BLACK in both themes (the bottom bar in the screenshots);
+        // white figures sit on it, so it saves power and matches the map chrome.
         shape = RoundedCornerShape(28.dp),
         border = if (amoled) BorderStroke(1.dp, SheetPalette.BorderAmoled) else null,
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
         colors = CardDefaults.cardColors(
-            containerColor = SheetPalette.bg(dark, amoled),
-            contentColor = SheetPalette.ink(dark),
+            containerColor = androidx.compose.ui.graphics.Color.Black,
+            contentColor = androidx.compose.ui.graphics.Color.White,
         ),
     ) {
         // LAYOUT (issue #273): End on the LEFT as an icon, the trip figures CENTERD, Steps on the
@@ -847,11 +892,19 @@ fun NavBarTop(
     onPause: (() -> Unit)? = null,
 ) {
     val dark = isAppInDarkTheme()
+    // The bar surface is OLED black (see NavControls), so the handle chevron and
+    // the in-bar road name always use the dark inks — never the light sheet ink.
+    val barInk = SheetPalette.InkDark
+    val barDim = SheetPalette.DimDark
+    // No-traffic-signal ETA: Google's bar reads white-on-black here, not the
+    // sheet ink — the bar is a black pill in both themes (see NavControls).
     val etaColor = when {
-        trafficRatio == null -> SheetPalette.ink(dark)
+        trafficRatio == null -> androidx.compose.ui.graphics.Color.White
         trafficRatio > 1.4 -> SheetPalette.TrafficRed
         trafficRatio > 1.15 -> SheetPalette.TrafficAmber
-        else -> SheetPalette.TrafficGreen
+        // Good-traffic green on the black pill: Google's vivid green, not the deep
+        // light-theme value (the bar is black in both themes).
+        else -> androidx.compose.ui.graphics.Color(0xFF4CAF50)
     }
     Column {
         // The handle: a chevron that says "this lifts" (or "this closes", pointing down on the
@@ -870,7 +923,7 @@ fun NavBarTop(
                 Icon(
                     if (handleUp) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = stringResource(if (handleUp) R.string.nav_steps_handle_cd else R.string.steps_close_cd),
-                    tint = SheetPalette.dim(dark),
+                    tint = barDim,
                     modifier = Modifier.size(22.dp),
                 )
             } else {
@@ -880,7 +933,7 @@ fun NavBarTop(
                     Icon(
                         if (handleUp) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                         contentDescription = stringResource(if (handleUp) R.string.nav_steps_handle_cd else R.string.steps_close_cd),
-                        tint = SheetPalette.dim(dark),
+                        tint = barDim,
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(4.dp))
@@ -888,7 +941,7 @@ fun NavBarTop(
                         roadName,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
-                        color = SheetPalette.ink(dark),
+                        color = barInk,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -941,7 +994,7 @@ fun NavBarTop(
                             else -> ""
                         },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (paused) MaterialTheme.colorScheme.primary else SheetPalette.dim(dark),
+                    color = if (paused) MaterialTheme.colorScheme.primary else barDim,
                 )
             }
             Spacer(Modifier.width(8.dp))
@@ -1058,6 +1111,8 @@ fun NavStopOffer(
     onAdd: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    // Issue #604: the tapped place is already a stop, so the card also offers to take it out.
+    onRemove: (() -> Unit)? = null,
     autoDismissMs: Long = 10_000L,
     // Changes on every offer, so a second tap on the same place restarts the clock.
     offerKey: Any = name,
@@ -1107,6 +1162,12 @@ fun NavStopOffer(
                 }
             }
             Spacer(Modifier.width(10.dp))
+            if (onRemove != null) {
+                androidx.compose.material3.TextButton(
+                    onClick = onRemove,
+                    modifier = Modifier.dpadHighlight(RoundedCornerShape(20.dp)),
+                ) { Text(stringResource(R.string.nav_stop_offer_remove)) }
+            }
             androidx.compose.material3.Button(
                 onClick = onAdd,
                 modifier = Modifier.dpadHighlight(RoundedCornerShape(20.dp)),
@@ -1144,10 +1205,10 @@ fun NavStopOffer(
  * The drive's two "hold something" controls behind ONE button (user 2026-09-18).
  *
  * Pause and mute used to sit as a two-target pill in the nav stack, which is 112 dp of a small
- * phone's right edge for two things you touch rarely. Now there is one 56 dp button and the tap
- * PAUSES - the control you reach for at speed costs one touch and never opens a menu first - while
- * the other one slides out beside it for [OPEN_MS] so it is there if you want it. A LONG PRESS
- * mutes outright, for people who know where it is. The button carries both states - the glyph is
+ * phone's right edge for two things you touch rarely. Now there is one 56 dp button: on a running
+ * drive the FIRST tap slides mute out beside it for [OPEN_MS] and a second tap on the same button
+ * pauses (pausing on the first tap made holding the drive the only way to reach mute); while
+ * paused, one tap resumes. A LONG PRESS mutes outright, for people who know where it is. The button carries both states - the glyph is
  * pause or resume, the accent fill says the drive is held, and a muted drive wears a small crossed
  * speaker - because one control standing for two states has to show both.
  *

@@ -19,12 +19,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,18 +41,28 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.vela.R
 import app.vela.ui.dpadHighlight
 
-// The map result pins' red (PoiIcons.RESULT_RED) — the destination pin on this card is the same
+// The map result pins' red — the destination pin on this card is the same
 // species as the pin the route ends at on the map, so the two must stay the same ink.
-private val DestinationRed = Color(0xFFDB4437)
+// Google's whitish field outline on dark.
+private val FieldOutline = Color.White.copy(alpha = 0.30f)
+// Google's card face is Roboto (Apache-licensed, bundled here): the platform font
+// differs per OEM (Samsung's rounded face reads "wrong" against the reference),
+// so the card pins its own family. Weights map onto the two bundled files.
+private val CardFace = FontFamily(
+    Font(R.font.roboto_regular, FontWeight.Normal),
+    Font(R.font.roboto_medium, FontWeight.Medium),
+)
 
 // One endpoint row's height; the connector dots between rows key off it too.
-private val ENDPOINT_ROW = 44.dp
+private val ENDPOINT_ROW = 48.dp
 private val GLYPH_RAIL = 26.dp
 
 /**
@@ -83,11 +93,17 @@ fun RouteTopCard(
 ) {
     val ink = MaterialTheme.colorScheme.onSurface
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    // Google's header card is the dark sheet tone (#202124), not the lighter
+    // search-bar grey (#303134) — sampled off the chooser screenshot. The card has
+    // no field boxes or blue text: origin reads blue (it IS your location), the
+    // destination reads white.
+    val cardBg = Color(0xFF303134)
+    val destInk = Color(0xFFE8EAED)
     Card(
         modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        // Same tone as the search bar it replaces, so the top chrome reads as one family.
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = CardDefaults.cardColors(containerColor = cardBg),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3C4043)),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)) {
@@ -95,24 +111,23 @@ fun RouteTopCard(
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.place_close_directions),
-                    tint = dim,
+                    tint = Color.White,
                 )
             }
             Column(Modifier.weight(1f)) {
                 EndpointRow(
                     text = originName,
-                    textColor = if (onEditOrigin != null) MaterialTheme.colorScheme.primary else ink,
+                    textColor = if (onEditOrigin != null) Color(0xFFA8C7FA) else ink,
                     editable = onEditOrigin != null,
                     editLabel = stringResource(R.string.place_change_start),
                     onClick = onEditOrigin,
+                    borderColor = FieldOutline,
                 ) {
-                    // Origin = a ring, teal when it's literally you (the app's "this is me" ink;
-                    // gmaps uses its location blue the same way).
-                    Box(
-                        Modifier
-                            .size(12.dp)
-                            .border(2.dp, if (originIsMe) MaterialTheme.colorScheme.primary else dim, CircleShape),
-                    )
+                    // Origin = Google's location dot: a blue center in a white ring.
+                    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(18.dp).clip(CircleShape).background(Color.White))
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                    }
                 }
                 ConnectorRow(dim)
                 if (stops.isNotEmpty() && showStopControls) {
@@ -126,6 +141,7 @@ fun RouteTopCard(
                         editable = true,
                         editLabel = stringResource(R.string.stops_edit),
                         onClick = onEditStops,
+                        borderColor = FieldOutline,
                         trailing = { Icon(Icons.Default.DragHandle, contentDescription = null, tint = dim, modifier = Modifier.size(20.dp).padding(end = 2.dp)) },
                     ) {
                         Box(Modifier.size(8.dp).clip(CircleShape).background(dim))
@@ -158,13 +174,15 @@ fun RouteTopCard(
                 }
                 EndpointRow(
                     text = destinationName,
-                    textColor = if (onEditDestination != null) MaterialTheme.colorScheme.primary else ink,
+                    textColor = destInk,
                     bold = true,
                     editable = onEditDestination != null,
                     editLabel = stringResource(R.string.place_change_destination),
                     onClick = onEditDestination,
+                    borderColor = FieldOutline,
                 ) {
-                    Icon(Icons.Default.Place, contentDescription = null, tint = DestinationRed, modifier = Modifier.size(20.dp))
+                    // Destination = Google's hollow coral pin (outline teardrop, not solid).
+                    Icon(Icons.Outlined.Place, contentDescription = null, tint = Color(0xFFF28B82), modifier = Modifier.size(22.dp))
                 }
                 // Add stop keeps its own quiet row (gmaps buries it in an overflow menu; a
                 // visible row is the discoverable version and the card has the room).
@@ -193,7 +211,7 @@ fun RouteTopCard(
                             Icon(
                                 androidx.compose.material.icons.Icons.Default.MoreVert,
                                 contentDescription = stringResource(R.string.exp_chooser_more),
-                                tint = dim,
+                                tint = Color.White,
                             )
                         }
                         app.vela.ui.VelaMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -206,7 +224,7 @@ fun RouteTopCard(
                     Icon(
                         Icons.Default.SwapVert,
                         contentDescription = stringResource(R.string.place_swap_start_destination),
-                        tint = dim,
+                        tint = Color.White,
                     )
                 }
                 // With stops in play the labeled Add-stop row is gone (the stops summary row took
@@ -241,6 +259,8 @@ private fun EndpointRow(
     editLabel: String,
     onClick: (() -> Unit)?,
     bold: Boolean = false,
+    // Google boxes every endpoint with the same whitish outline.
+    borderColor: Color? = null,
     // Drawn after the text at the row's end (the stops' drag handle).
     trailing: (@Composable () -> Unit)? = null,
     glyph: @Composable () -> Unit,
@@ -250,6 +270,7 @@ private fun EndpointRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(ENDPOINT_ROW)
+            .then(if (borderColor != null) Modifier.border(1.dp, borderColor, RoundedCornerShape(8.dp)).padding(end = 12.dp) else Modifier)
             .then(
                 if (onClick != null) {
                     Modifier
@@ -267,7 +288,7 @@ private fun EndpointRow(
         Spacer(Modifier.width(8.dp))
         Text(
             text,
-            style = if (bold) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
+            style = (if (bold) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge).copy(fontFamily = CardFace),
             fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
             color = textColor,
             maxLines = 1,
@@ -278,16 +299,14 @@ private fun EndpointRow(
     }
 }
 
-/** The dots between glyphs plus a hairline under the text side — gmaps' rail connector. */
+/** Three connector dots between the boxed fields — gmaps' rail, no divider. */
 @Composable
 private fun ConnectorRow(dim: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(10.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(14.dp)) {
         Box(Modifier.width(GLYPH_RAIL), contentAlignment = Alignment.Center) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                repeat(2) { Box(Modifier.size(2.5.dp).clip(CircleShape).background(dim.copy(alpha = 0.7f))) }
+                repeat(3) { Box(Modifier.size(2.5.dp).clip(CircleShape).background(dim.copy(alpha = 0.7f))) }
             }
         }
-        Spacer(Modifier.width(8.dp))
-        HorizontalDivider(Modifier.weight(1f), color = dim.copy(alpha = 0.18f))
     }
 }

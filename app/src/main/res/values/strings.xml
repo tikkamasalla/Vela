@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name" translatable="false">Vela Maps</string>
+    <string name="app_name" translatable="false">Google Maps Reborn</string>
     <string name="app_name_generic" translatable="false">Maps</string>
 
     <!-- shared search-category chip labels (map + along-route); the search QUERY stays English in code -->
@@ -84,6 +84,11 @@
     <string name="map_voice_installing">Installing Vela Voice…</string>
     <string name="map_region_downloading">Downloading %1$s routing · %2$d%%</string> <!-- format -->
     <string name="map_region_places_downloading">Saving %1$s places for offline search · %2$d%%</string> <!-- format -->
+    <string name="map_region_placesfile_downloading">Saving %1$s places for the map · %2$d%%</string> <!-- format -->
+    <string name="map_region_map_downloading">Downloading the %1$s map · %2$d%%</string> <!-- format -->
+    <string name="map_region_satellite_downloading">Downloading %1$s satellite imagery · %2$d%%</string> <!-- format -->
+    <string name="mapvm_region_ready">%1$s is downloaded: map, routes and places work offline</string> <!-- format -->
+    <string name="mapvm_region_incomplete">%1$s is only partly downloaded. Connect and tap Update in Settings, Offline maps to finish it</string> <!-- format -->
     <string name="mapvm_poipack_ready">Places in %1$s are now searchable offline</string> <!-- format -->
     <string name="mapvm_poipack_unavailable">No place pack for %1$s yet. It\'ll appear here once it\'s published.</string> <!-- format -->
     <string name="settings_demo_drive">Simulate driving (demo)</string>
@@ -123,9 +128,12 @@
     <string name="exp_chooser_share_text" translatable="false">Directions to %1$s: %2$s, %3$s</string>
     <string name="settings_flock_route_alert" translatable="false">Avoid surveillance cameras</string>
     <string name="settings_flock_detour" translatable="false">Try side streets around cameras</string>
-    <string name="settings_flock_detour_hint" translatable="false">When every route still passes cameras, tries a point just off the road at each camera and routes through it, the way you would by long-pressing the map. A route that passes fewer cameras within the same small detour goes to the top of the list. Costs a few extra route requests per trip. Off by default.</string>
+    <string name="settings_flock_detour_hint" translatable="false">When the top route still passes cameras, tries a point just off the road at each camera and routes through it, the way you would by long-pressing the map. A route that passes fewer cameras within the same small detour goes to the top of the list. Costs a few extra route requests per trip. Off by default.</string>
     <string name="settings_flock_route_alert_hint" translatable="false">Counts the license-plate reader (Flock) cameras on each route (a camera aimed across the road is left out, since it reads cross traffic) and auto-picks a lower-camera one when it costs only a little longer. It never sends you far out of the way, so where cameras are unavoidable it just shows the counts and leaves the choice to you. Long-press the map to route through a point yourself. Off by default.</string>
-    <string name="dir_cameras_on_route" translatable="false">%1$d cameras on this route</string> <!-- format -->
+    <plurals name="dir_cameras_on_route" translatable="false">
+        <item quantity="one">%1$d camera on this route</item>
+        <item quantity="other">%1$d cameras on this route</item>
+    </plurals>
 
     <string name="settings_read_all_reviews">“Read all reviews” button</string>
     <string name="settings_read_all_reviews_hint">Adds a “Read all reviews” button that opens Google\'s full reviews page inside the app, with every review. Off = Vela\'s own review list only.</string>
@@ -156,14 +164,27 @@
     <string name="settings_offline">Offline maps</string>
     <string name="settings_offline_hint">Saving the area around you is usually all you need: the full map, addresses and places nearby, plus routing. Whole states and countries are for long trips with no signal, and they are large.</string>
     <string name="settings_offline_map_area">This area (full map)</string>
-    <string name="settings_offline_download_viewport">Download the area you\'re viewing</string>
+    <string name="settings_offline_download_viewport">Download an area</string>
     <string name="settings_region_updates">Update downloaded regions</string>
     <string name="settings_region_updates_off">Never on its own</string>
     <string name="settings_region_updates_wifi">On Wi-Fi</string>
     <string name="settings_region_updates_mobile">On Wi-Fi and mobile data</string>
     <string name="settings_offline_places_with_downloads">Include places with downloads</string>
     <string name="settings_offline_places_with_downloads_hint">A region download also brings Vela\'s place data for it, so the businesses on the map show with no signal. Around half a gigabyte for a big state. Off = places only stream while online.</string>
-    <string name="settings_offline_download_viewport_hint">Saves the whole map you\'re looking at, its streets, house numbers and buildings, plus turn-by-turn directions for the region around it. Everything here keeps working with no signal.</string>
+    <string name="settings_offline_cached_places">Keep viewed places for offline</string>
+    <string name="settings_offline_cached_places_hint">Every place you open while online is saved on the phone (details, reviews, photos), so it still opens with no signal. Text menus aren\'t parsed, so there is nothing of them to keep. A few kilobytes per place.</string>
+    <string name="settings_offline_cached_places_clear">Clear cached places</string>
+    <string name="settings_offline_cached_places_used">%1$s stored on this phone</string>
+    <string name="settings_offline_cached_sv_used">Street View: %1$s stored on this phone</string>
+    <string name="settings_offline_cached_sv_clear">Clear Street View</string>
+    <string name="settings_offline_download_viewport_hint">Opens the map with a frame over it. Move and zoom until the frame covers the area you want, from a neighborhood to half a state; you\'ll see the size before anything downloads. Everything in the frame is saved at full street detail.</string>
+    <string name="area_pick_hint">Move and zoom the map until the frame covers the area to download</string>
+    <string name="area_pick_estimate">About %1$s at full street detail</string>
+    <string name="area_pick_estimating">Working out the size…</string>
+    <string name="area_pick_too_large">Too large to save as one area. Zoom in, or download all of %1$s below.</string>
+    <string name="area_pick_too_large_plain">Too large to save as one area. Zoom in a little.</string>
+    <string name="settings_area_confirm_region">Also get %1$s for offline directions, places and the map beyond this area: about %2$s. These only come as a whole region.</string>
+    <string name="settings_area_confirm_region_have">Offline directions and places for %1$s are already downloaded.</string>
     <string name="settings_offline_no_areas">No areas saved yet.</string>
     <string name="settings_offline_addresses_missing">Areas you saved before this update don\'t include address data. Update them to search and route to addresses offline.</string>
     <string name="settings_offline_addresses_update">Update saved areas</string>
@@ -175,6 +196,7 @@
     <string name="settings_routing_filter_placeholder">Search</string>
     <string name="settings_routing_no_match">No regions match “%1$s”.</string> <!-- format -->
     <string name="settings_routing_downloading">Downloading… %1$d%%</string> <!-- format -->
+    <string name="settings_routing_updating">Updating… %1$d%%</string> <!-- format -->
     <string name="settings_routing_installed">Installed · routes offline here</string>
     <string name="settings_routing_installed_places">Installed · places searchable offline</string>
     <string name="settings_routing_places_downloading">Saving places · %1$d%%</string> <!-- format -->
@@ -241,8 +263,6 @@
     <string name="settings_places_source_both_hint">Vela\'s data draws the map, and once you stop panning one Google request adds anything it lacks. The extras show online only, and they arrive a beat after the map, so a few icons appear late and can take a label off a neighbor as they land.</string>
     <string name="settings_places_source_more">Learn more</string>
     <string name="settings_places_source_more_credit">Overture Maps</string>
-    <string name="settings_osm_businesses">OpenStreetMap shops too</string>
-    <string name="settings_osm_businesses_hint">Also shows the shops, restaurants and other businesses mapped in OpenStreetMap that Vela\'s data lacks. OpenStreetMap edits appear here after the map tiles are rebuilt, usually within a week. On by default.</string>
     <string name="settings_places_lookup">Look up tapped places on Google</string>
     <string name="settings_places_lookup_hint">Tapping a place fetches its hours, reviews and photos from Google, and Vela remembers the match so the next tap is instant. Off = a tapped place shows only what Vela\'s data has (name, type, address, phone, website) and nothing about the tap reaches Google. Search and directions still use Google.</string>
     <string name="settings_places_source_more_title">Where Vela\'s place data comes from</string>
@@ -258,6 +278,43 @@
     <string name="settings_poi_icon_size_hint">Small suits low-resolution screens like car head units, where the default icons render oversized.</string>
     <string name="settings_live_rechecks">Live traffic re-checks while navigating</string>
     <string name="settings_live_rechecks_hint">Every couple of minutes during a drive, Vela asks Google for fresh traffic from your current position. That powers faster-route offers and the live arrival time, but it also tells Google where along the route you are. Off: your route still recalculates when you leave it.</string>
+    <string name="nav_edit_route">Edit route</string>
+    <string name="nav_edit_route_hint">Add a stop along the way</string>
+    <string name="nav_stops_remove_next">Remove next</string>
+    <string name="nav_stops_remove_confirm">Remove %1$s from this drive?</string> <!-- format -->
+    <string name="nav_stops_remove_action">Remove</string>
+    <string name="nav_stop_offer_remove">Remove stop</string>
+    <string name="settings_google_session">Google session</string>
+    <string name="settings_block_google_telemetry">Block Google\'s page telemetry</string>
+    <string name="settings_google_usage">Requests to Google</string>
+    <string name="settings_google_usage_hint">Counted on this phone and never sent anywhere. Map tiles for live traffic and some satellite imagery are not included.</string>
+    <string name="google_usage_kind_page_resources">What Google pages load (images, scripts, logging)</string>
+    <string name="settings_google_usage_summary">Today: %1$d. Last 7 days: about %2$d a day.</string>
+    <string name="settings_google_usage_none">None yet.</string>
+    <string name="settings_google_usage_row">%1$s: %2$d today, %3$d this week</string>
+    <string name="google_usage_kind_search">Search and place lookups</string>
+    <string name="google_usage_kind_nearby">Places around the map</string>
+    <string name="google_usage_kind_details">Place details</string>
+    <string name="google_usage_kind_photos">Photos</string>
+    <string name="google_usage_kind_reviews">Reviews</string>
+    <string name="google_usage_kind_images">Images</string>
+    <string name="google_usage_kind_directions">Directions and traffic</string>
+    <string name="google_usage_kind_suggestions">Search suggestions</string>
+    <string name="google_usage_kind_streetview">Street View</string>
+    <string name="google_usage_kind_session">Session start</string>
+    <string name="google_usage_kind_lists">Shared lists</string>
+    <string name="google_usage_kind_page">Google pages (%1$s)</string>
+    <string name="google_usage_kind_other">Other</string>
+    <string name="settings_block_google_telemetry_hint">Google\'s pages report on themselves: logging pings and the account bar\'s background calls. Nothing Vela shows needs them. They go out by default because a browser that never sends them looks less like a person to Google, and that is part of what decides whether your session gets the limited view. Turn this on to answer them on the phone instead.</string>
+    <string name="settings_google_session_limited">Right now Google is giving this phone a limited view: fewer photos per page, no popular times on some places, and More reviews loads nothing. It usually lifts on its own after a while. A brand-new session starts out limited too, so starting one rarely helps.</string>
+    <string name="place_limited_view">Google is showing a limited view right now, so popular times and more reviews may be missing here.</string>
+    <string name="settings_google_session_hint">Google remembers this phone by a cookie, so what Vela looks up while it lasts can be linked together, without any name or account. Starting a new one caps that. A new session gets a shorter view from Google for a while (fewer reviews, popular times missing on some places).</string>
+    <string name="settings_google_session_week">Start a new one every week (recommended)</string>
+    <string name="settings_google_session_day">Start a new one every day</string>
+    <string name="settings_google_session_launch">Start a new one every time Vela opens (most private)</string>
+    <string name="settings_google_session_launch_hint">What this costs: Google treats every session as a new visitor, so you mostly get its shorter view (about five reviews, popular times often missing). Places load a little slower and use more data, because a new session\'s first answers come back trimmed and are asked again. Android restarts apps in the background, so this can mean several new sessions a day, and many new visitors from one connection can draw more of Google\'s bot checks. Google still sees your IP address, which links sessions from one connection over a short time anyway.</string>
+    <string name="settings_google_session_now">Start a new session now</string>
+    <string name="settings_google_session_done">New Google session started</string>
     <string name="settings_clear_history">Clear history</string>
     <string name="settings_clear_history_hint">Recent searches, recent places, parking history and recorded trips. Saved places and lists stay.</string>
     <string name="settings_clear_history_action">Clear</string>
@@ -436,6 +493,13 @@
     <string name="place_tab_reviews">Reviews</string>
     <string name="place_tab_menu">Menu</string>
     <string name="place_tab_about">About</string>
+    <string name="place_tab_overview">Overview</string>
+    <string name="place_tab_updates">Updates</string>
+    <string name="place_suggest_edit">Suggest an edit</string>
+    <string name="place_search_this_place">Search this place</string>
+    <string name="place_order_online">Order online</string>
+    <string name="place_related_search">Related to your search</string>
+    <string name="mapscreen_back">Back</string>
     <string name="place_sort_relevant">Most relevant</string>
     <string name="place_sort_newest">Newest</string>
     <string name="place_sort_highest">Highest rating</string>
@@ -445,6 +509,9 @@
         <item quantity="other">%1$d reviews</item>
     </plurals>
     <string name="place_all_n_reviews">All %1$d reviews · sort &amp; search</string> <!-- format -->
+    <string name="place_more_photos">More photos</string>
+    <string name="place_more_reviews">More reviews</string>
+    <string name="place_reviews_limited">Google is showing a shorter list of reviews right now.</string>
     <string name="place_all_reviews">All reviews · sort &amp; search</string>
     <string name="place_reviews_progress">Reviews · %1$d of about %2$d</string> <!-- format -->
     <string name="place_reviews_so_far">Reviews · %1$d so far</string> <!-- format -->
@@ -518,6 +585,10 @@
     <string name="mapscreen_expand_list">Expand list</string>
     <string name="mapscreen_close_results">Close search results</string>
     <string name="mapscreen_filter_open_now">Open now</string>
+    <string name="mapscreen_view_map">View map</string>
+    <string name="mapscreen_filter_cuisine">Cuisine</string>
+    <string name="mapscreen_filter_any_cuisine">Any cuisine</string>
+    <string name="mapscreen_filter_top_rated_chip">Top-rated</string>
     <string name="mapscreen_more_results">More results</string>
     <string name="intent_home_unset">Set Home first (search page, under the search bar)</string>
     <string name="intent_work_unset">Set Work first (search page, under the search bar)</string>
@@ -776,6 +847,13 @@
     <string name="map_import_needs_google">A shared Google Maps list can\'t open while Vela runs without Google.</string>
     <string name="map_link_needs_google">\"Open shared Google Maps links\" is off in Settings > Privacy.</string>
     <string name="map_link_unreadable">Couldn\'t open that link.</string>
+    <string name="settings_performance">Performance</string>
+    <string name="settings_hub_performance_sub">What loads ahead of time, map drawing</string>
+    <string name="settings_performance_intro">Loading things ahead of time makes them instant when you need them, and costs memory until then. The defaults follow how much memory this phone has.</string>
+    <string name="settings_full_place_load">Load all photos and reviews</string>
+    <string name="settings_full_place_load_hint">Off, a place loads its first few photos and first page of reviews, and More photos or All reviews fetch the rest. On, every place you open walks its whole photo gallery and up to 50 reviews, which is slower and sends Google many more requests.</string>
+    <string name="settings_speech_preload">Load voice search at startup</string>
+    <string name="settings_speech_preload_hint">Loads the voice search model when Vela opens, so the mic listens at once. It uses about 300 MB until two quiet minutes pass. Off, it loads when you tap into the search box. On by default on phones with about 8 GB of memory or more.</string>
     <string name="settings_google_free_links">Open shared Google Maps links</string>
     <string name="settings_google_free_links_hint">A short Google Maps link (maps.app.goo.gl) doesn\'t say where it points. With this on, Vela asks Google\'s link shortener once, with no cookies, and opens the place with the open sources. Full google.com/maps links open without asking. Shared lists still need Google.</string>
     <string name="map_import_failed">Couldn\'t import that list. Check the link and try again.</string>
@@ -820,7 +898,7 @@
     <string name="settings_voice_volume_louder">Louder</string>
     <string name="settings_voice_volume_loudest">Loudest</string>
     <string name="settings_voice_volume_hint">How loud spoken directions play over your media. Louder tiers apply to the Vela voice; system voices can only be made softer.</string>
-    <string name="place_avoid_not_honored">These routes may still use tolls, highways, or ferries. Vela can avoid them on a direct trip online, or offline in a downloaded area, but not yet on a trip with stops.</string>
+    <string name="place_avoid_not_honored">These routes may still use tolls, highways, or ferries: Google could not be reached to route around them, and the open router cannot. In a downloaded area Vela avoids them offline.</string>
     <string name="settings_lists_export_hint">Back up your lists to a file, or restore them on another device.</string>
     <string name="settings_lists_imported">Imported %1$d list(s)</string>
     <string name="settings_places_imported">Imported %1$d place(s)</string> <!-- format -->
@@ -958,6 +1036,8 @@
     <string name="settings_pause_in_bar">Pause button on the navigation bar</string>
     <string name="settings_pause_in_bar_hint">Puts pause beside the trip figures, where the step list button would be, and leaves mute with the map buttons. Off puts both on one button at the right of the map. Swipe up or use the arrow to open the step list either way.</string>
     <string name="settings_pause_in_bar_hint_buttons">With \"Prefer buttons over swipes\" on, the bar carries pause and the step list button side by side, and the trip figures shrink to fit.</string>
+    <string name="settings_low_power_nav">Low-power lock screen while navigating</string>
+    <string name="settings_low_power_nav_hint">While navigating, turning the screen off and back on shows Google\'s MinMode over the lock screen: the same live black map, turn banner and ETA as the full app, dimmed for a dash mount. Tap it any time to return to the map.</string>
     <string name="nav_steps_handle_cd">Show steps</string>
     <string name="settings_route_trail">Road behind you</string>
     <string name="settings_route_trail_hint">Keeps the part of the route you have already driven drawn in gray behind the arrow. Off hides it, so only the road ahead is drawn.</string>
@@ -1041,4 +1121,9 @@
     <string name="settings_nav_tap_places">Tap places while driving (experiment)</string>
     <string name="settings_nav_tap_places_hint">While navigating, fuel, food and charging places stay on the map and tapping one offers it as a stop; a second tap adds it. Off by default, since nav hides places to keep the map readable. Turning this on also turns on Show places.</string>
     <string name="mapvm_start_from_here">Starting from where you are</string>
+    <string name="place_busy_not">Not busy</string>
+    <string name="place_busy_not_too">Not too busy</string>
+    <string name="place_busy_little">A little busy</string>
+    <string name="place_busy_usually">Usually busy</string>
+    <string name="place_busy_very">Very busy</string>
 </resources>

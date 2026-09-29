@@ -7,11 +7,19 @@ import androidx.compose.material.icons.automirrored.filled.StarHalf
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.vela.ui.theme.isAppInDarkTheme
 import kotlin.math.roundToInt
 
 /** Gold used for rating stars throughout the app. */
@@ -25,19 +33,50 @@ val StarGold = Color(0xFFF5B400)
  *  when it's absent. Green requires an affirmative signal AND no contradiction: a
  *  wrongly-true [openNow] must never paint text that literally reads closed
  *  ("Closed ⋅ Opens 5 AM") green - and "Opens …" ≠ "Open"/"Open 24 hours" (the prefix
- *  hole that greened a closed place). */
+ *  hole that greened a closed place). Composable for the theme-aware green. */
+@Composable
 fun placeStatusColor(status: String, openNow: Boolean? = null): Color {
     val s = status.trim()
+    val green = SheetPalette.statusGreen(isAppInDarkTheme())
     val textSaysClosed = s.startsWith("Closed") || s.startsWith("Opens") || s.startsWith("Opening") ||
         s.startsWith("Temporarily") || s.startsWith("Permanently")
     return when {
         s.contains("soon", ignoreCase = true) -> Color(0xFFE8A100)
         openNow == false -> Color(0xFFD93025)
-        openNow == true && !textSaysClosed -> Color(0xFF1E8E3E)
+        openNow == true && !textSaysClosed -> green
         textSaysClosed -> Color(0xFFD93025)
-        s.startsWith("Open") || s.startsWith("Closes") -> Color(0xFF1E8E3E)
+        s.startsWith("Open") || s.startsWith("Closes") -> green
         else -> Color(0xFFD93025)
     }
+}
+
+/** Google-style status line: the head ("Open"/"Closed"/"Closes soon") wears the
+ *  status color, everything after the separator ("· Closes 10 p.m.") reads dim
+ *  grey. Single-segment lines ("Open 24 hours") stay fully colored. */
+@Composable
+fun StatusText(
+    status: String,
+    openNow: Boolean? = null,
+    style: TextStyle = LocalTextStyle.current,
+    fontWeight: FontWeight? = null,
+    dim: Color = Color.Gray,
+    modifier: Modifier = Modifier,
+) {
+    val head = status.substringBefore("·").trim()
+    val tail = status.substringAfter("·", "").trim()
+    Text(
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = placeStatusColor(status, openNow), fontWeight = fontWeight)) {
+                append(head)
+            }
+            if (tail.isNotEmpty()) {
+                append(" · ")
+                withStyle(SpanStyle(color = dim)) { append(tail) }
+            }
+        },
+        style = style,
+        modifier = modifier,
+    )
 }
 
 /**

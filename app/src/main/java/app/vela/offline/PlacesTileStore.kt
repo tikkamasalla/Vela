@@ -73,12 +73,36 @@ class BasemapTileStore @Inject constructor(
         // The WORLD archive is never a normal candidate: it covers every point on earth, so the
         // area sort would rank it last anyway, and the roads probe below would reject it outright
         // (it carries no transportation layer at any zoom). It is the explicit last resort instead.
+        val boxArea = { id: String -> index[id]?.let { b -> (b[2] - b[0]) * (b[3] - b[1]) } ?: Double.MAX_VALUE }
+        val (tx, ty) = PmtilesReader.tileOf(c.lat, c.lng, COVERAGE_PROBE_Z)
+        // OFFLINE A FRESH MOUNT NEEDS ONLY ROADS SOMEWHERE IN VIEW (2026-09-26, a head unit with a
+        // whole state downloaded: roads for a moment at start, then the world archive's bare
+        // states and nothing else). The online rule below wants roads at the center, in the whole
+        // ring and under every viewport corner; one corner over a lake, a forest or the sea is a
+        // definite no, and offline that no fell through to the world archive. Worse, the mounted
+        // archive was then the world one, which the keep rule above skips, so the strict test ran
+        // again on every idle and the state never came back. With nothing to stream, any
+        // downloaded archive whose roads reach the view beats the world archive, and its box only
+        // has to hold the center or a corner (a wide car screen centered just over a state line
+        // still shows the state it can).
+        if (keepMounted) {
+            val points = listOf(c) + view
+            val inView = installed().entries
+                .filter { (id, _) -> id != WORLD_ID }
+                .filter { (id, _) -> index[id]?.let { b -> points.any { p -> p.lat in b[0]..b[2] && p.lng in b[1]..b[3] } } ?: true }
+                .sortedBy { (id, _) -> boxArea(id) }
+            var unreadable: File? = null
+            for ((_, f) in inView) {
+                if (viewTouches(f, tx, ty, view)) return f
+                if (unreadable == null && coverage(f, tx, ty) == null) unreadable = f
+            }
+            return unreadable ?: worldArchive()
+        }
         val covering = installed().entries
             .filter { (id, _) -> id != WORLD_ID }
             .filter { (id, _) -> index[id]?.let { b -> c.lat in b[0]..b[2] && c.lng in b[1]..b[3] } ?: true }
-            .sortedBy { (id, _) -> index[id]?.let { b -> (b[2] - b[0]) * (b[3] - b[1]) } ?: Double.MAX_VALUE }
+            .sortedBy { (id, _) -> boxArea(id) }
         if (covering.isEmpty()) return worldArchive()
-        val (tx, ty) = PmtilesReader.tileOf(c.lat, c.lng, COVERAGE_PROBE_Z)
         // "Cannot tell" and "definitely no roads here" are NOT the same answer, and collapsing them
         // was the second half of issue #552: past a region's real data but still inside its
         // bounding box, every probe said a definite no and the pick mounted the archive regardless,
@@ -285,32 +309,32 @@ abstract class PmtilesRegionStore(
      *  manifest region covering it. One, not every match: regions nest (a city test box inside its
      *  state), and two archives on the style drew every business in the overlap twice. An installed
      *  archive with no index entry (a dropped-in test file) counts as covering everything. */
-    /** The bake date (`rev`, YYYYMMDD) of the archive [sourcesFor] last picked, 0 when unknown. The
-     *  app hides the basemap's own points only over an archive baked with the one-set bake. */
-    @Volatile var lastPickRev: Int = 0
-        private set
+    /** What [sourcesFor] picked: the source URIs and the picked archive's bake date (`rev`, YYYYMMDD,
+     *  0 when unknown). The app hides the basemap's own points only over an archive baked with the
+     *  one-set bake. Returned together because two camera-idle lookups can overlap, and a shared
+     *  "last picked" field let one lookup read the other's answer. */
+    data class Pick(val uris: List<String>, val rev: Int)
 
-    suspend fun sourcesFor(center: LatLng?, manifestUrl: String): List<String> {
+    suspend fun sourcesFor(center: LatLng?, manifestUrl: String): Pick {
         val local = installed()
-        lastPickRev = 0
-        val c = center ?: return local.entries.take(1).map { (id, f) -> lastPickRev = installedRev(id); "pmtiles://file://${f.absolutePath}" }
+        val c = center ?: return local.entries.firstOrNull()
+            ?.let { (id, f) -> Pick(listOf("pmtiles://file://${f.absolutePath}"), installedRev(id)) } ?: Pick(emptyList(), 0)
         val index = readIndex()
         val localPick = local.entries
             .filter { (id, _) -> index[id]?.let { b -> c.lat in b[0]..b[2] && c.lng in b[1]..b[3] } ?: true }
             .minByOrNull { (id, _) -> index[id]?.let { b -> (b[2] - b[0]) * (b[3] - b[1]) } ?: Double.MAX_VALUE }
-        if (localPick != null) { lastPickRev = installedRev(localPick.key); return listOf("pmtiles://file://${localPick.value.absolutePath}") }
+        if (localPick != null) return Pick(listOf("pmtiles://file://${localPick.value.absolutePath}"), installedRev(localPick.key))
         val streamed = runCatching { manifest(manifestUrl) }.getOrDefault(emptyList())
             .filter { it.covers(c) }
-            .minByOrNull { it.area() } ?: return emptyList()
-        lastPickRev = streamed.rev
-        return listOf("pmtiles://${streamed.url}")
+            .minByOrNull { it.area() } ?: return Pick(emptyList(), 0)
+        return Pick(listOf("pmtiles://${streamed.url}"), streamed.rev)
     }
 
     /** Download [region]'s archive for offline use. True when installed (or already was). */
     /** [replace] downloads a fresh copy over an installed archive: the new file lands in `.tmp` and
      *  is renamed over the old one only when complete and verified, so a failed or canceled update
      *  leaves the region as it was (the Update button used to delete first, 2026-09-22). */
-    suspend fun download(region: Region, replace: Boolean = false, onProgress: (Int) -> Unit): Boolean = withContext(Dispatchers.IO) {
+    suspend fun download(region: Region, replace: Boolean = false, active: () -> Boolean = { true }, onProgress: (Int) -> Unit): Boolean = withContext(Dispatchers.IO) {
         downloadMutex.withLock {
             if (!replace && fileFor(region.id).exists()) { onProgress(100); return@withLock true }
             root.mkdirs()
@@ -326,6 +350,7 @@ abstract class PmtilesRegionStore(
                         tmp.outputStream().use { out ->
                             val buf = ByteArray(64 * 1024)
                             while (true) {
+                                if (!active()) error("canceled")
                                 val n = input.read(buf)
                                 if (n < 0) break
                                 out.write(buf, 0, n)
