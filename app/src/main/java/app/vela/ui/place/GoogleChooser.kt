@@ -271,7 +271,10 @@ fun GoogleStyleDirectionsPanel(
                                 withStyle(SpanStyle(color = trafficEtaColor(route) ?: ink, fontWeight = FontWeight.Medium, fontSize = 22.sp)) {
                                     append(formatDuration(eta))
                                 }
-                                withStyle(SpanStyle(color = dim, fontSize = 18.sp)) { append(" (${formatDistance(route.distanceMeters)})") }
+                                // Google renders the "(21.0 km)" in the same white as the time,
+                                // not the dim grey (verified on the chooser screenshot) — the whole
+                                // headline reads as one figure.
+                                withStyle(SpanStyle(color = ink, fontSize = 18.sp)) { append(" (${formatDistance(route.distanceMeters)})") }
                             },
                         )
                         Spacer(Modifier.height(2.dp))
@@ -281,7 +284,7 @@ fun GoogleStyleDirectionsPanel(
                         val via = route.summary?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.exp_chooser_via, it) }
                         Text(
                             when {
-                                isFastest && routes.size > 1 -> listOfNotNull(stringResource(R.string.exp_chooser_fastest), via).joinToString(" · ")
+                                isFastest -> listOfNotNull(stringResource(R.string.exp_chooser_fastest), via).joinToString(" · ")
                                 deltaMin >= 1 -> listOfNotNull(stringResource(R.string.exp_chooser_slower, formatDuration(eta - fastest)), via).joinToString(" · ")
                                 else -> via ?: ""
                             },
@@ -291,7 +294,7 @@ fun GoogleStyleDirectionsPanel(
                         val idx = routes.indexOf(route).coerceAtLeast(0)
                         val cams = flockOnRoute.getOrElse(idx) { 0 }
                         if (cams > 0) {
-                            Text(stringResource(R.string.dir_cameras_on_route, cams), style = MaterialTheme.typography.bodyMedium, color = SheetPalette.TrafficAmber)
+                            Text(androidx.compose.ui.res.pluralStringResource(R.plurals.dir_cameras_on_route, cams, cams), style = MaterialTheme.typography.bodyMedium, color = SheetPalette.TrafficAmber)
                         }
                         // The alternates affordance sits with the ETA, not down in the button row: it is
                         // about THIS number ("29 min ... and what else?"). Always there, so its absence
@@ -384,7 +387,7 @@ fun GoogleStyleDirectionsPanel(
                                         listOfNotNull(
                                             formatDistance(r.distanceMeters),
                                             r.summary?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.exp_chooser_via, it) },
-                                            if (cams > 0) stringResource(R.string.dir_cameras_on_route, cams) else null,
+                                            if (cams > 0) androidx.compose.ui.res.pluralStringResource(R.plurals.dir_cameras_on_route, cams, cams) else null,
                                             if (i == fewestCamIdx) stringResource(R.string.exp_chooser_fewest_cams) else null,
                                         ).joinToString(" · "),
                                         style = MaterialTheme.typography.bodyMedium,

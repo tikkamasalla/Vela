@@ -2,7 +2,6 @@ import java.io.File
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.hilt)
@@ -33,8 +32,9 @@ android {
         applicationId = (project.findProperty("appId") as String?)?.takeIf { it.isNotBlank() } ?: "app.vela"
         minSdk = 26
         targetSdk = 35
-        // Overridable from CI: -PappVersionCode / -PappVersionName (ci.yml derives
-        // them from the run number → 0.3.<run> / 2000+run). Defaults are local/dev only.
+        // Overridable from CI: -PappVersionCode / -PappVersionName (ci.yml derives them from the
+        // run number: 0.4.<run> / (2000+run)*10 since 2026-09-23, the last digit being the chip
+        // type in a per-chip build, see `splits` below). Defaults are local/dev only.
         versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
         versionName = (project.findProperty("appVersionName") as String?) ?: "0.3.0"
 
@@ -163,6 +163,19 @@ android {
         }
     }
 
+    // One APK per chip type (2026-09-23, `-PabiSplits`, turned on in CI by the ABI_SPLITS repo
+    // variable). Each output adds its chip's digit to the versionCode (ApkChoice.TAGS order:
+    // armv7 1, arm64 2, x86 3, x86_64 4; the all-in-one APK keeps 0), so the F-Droid repo sees
+    // distinct codes and moving from the all-in-one APK to a chip APK of the same build is an
+    // upgrade. Without the flag the build is the single all-in-one APK, as before.
+    splits {
+        abi {
+            isEnable = project.hasProperty("abiSplits")
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
     buildTypes {
         release {
             // Always ship release: R8 here is what keeps map scroll/nav smooth
@@ -183,7 +196,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -199,6 +211,13 @@ android {
                 "**/x86/libonnxruntime.so", "**/x86/libsherpa-onnx*.so",
                 "**/x86_64/libonnxruntime.so", "**/x86_64/libsherpa-onnx*.so",
             )
+            // The all-in-one APK carries Cronet for ARM only (2026-09-23): x86 emulators and
+            // Chromebooks still install and run it, and their Google requests stay on OkHttp
+            // (CronetHolder fails to load the library and GoogleTransport falls back). Saves
+            // ~14 MB. A per-chip build keeps it: there the x86 APKs carry their own Cronet.
+            if (!project.hasProperty("abiSplits")) {
+                excludes += listOf("**/x86/libcronet*.so", "**/x86_64/libcronet*.so")
+            }
         }
     }
 }
@@ -221,6 +240,15 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.webkit)
+    // Cronet, Chromium's own network stack, for Google-host requests (app/net/CronetTransport,
+    // calibration `useCronet`) and the WebView proxy (`webProxy`). Chromium's OWN prebuilt Release
+    // build for the Chrome for Android version in gradle.properties `vela.cronetVersion`, packed into
+    // one AAR by scripts/build-cronet-aar.sh (gitignored; CI fetches it from the `cronet-runtime`
+    // infra release). Chromium license (BSD) plus third-party licenses, LICENSE inside the AAR.
+    // Maven's cronet-embedded stopped at 143 while Vela claims a current Chrome. Its protobuf is
+    // shaded inside (org.chromium.net.internal), so nothing clashes with OsmAnd's.
+    val cronetVersion = providers.gradleProperty("vela.cronetVersion").get()
+    implementation(files("libs/cronet-$cronetVersion.aar"))
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -256,5 +284,19 @@ dependencies {
 tasks.withType<Test>().configureEach {
     listOf("velaPmtiles", "velaLat", "velaLng", "velaArchive", "velaPatch", "velaFingerprint").forEach { k ->
         System.getProperty(k)?.let { systemProperty(k, it) }
+    }
+}
+
+// The chip digit on each per-chip APK's versionCode (see `splits` in android {}).
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters
+                .firstOrNull { it.filterType == com.android.build.api.variant.FilterConfiguration.FilterType.ABI }
+                ?.identifier ?: return@forEach
+            val digit = listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64").indexOf(abi) + 1
+            val base = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
+            output.versionCode.set(base + digit)
+        }
     }
 }

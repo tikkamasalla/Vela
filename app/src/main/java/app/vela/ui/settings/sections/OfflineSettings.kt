@@ -101,8 +101,10 @@ internal fun OfflineSettingsScreen(vm: MapViewModel, onBack: () -> Unit, onClose
             // The top focusable control: Back routes its DOWN here, UP from here goes back to Back.
             modifier = topRow.padding(start = 16.dp, top = 4.dp).dpadHighlight(androidx.compose.foundation.shape.CircleShape),
             onClick = {
-                vm.downloadViewport()
-                onCloseSettings() // back to the map so the user sees the download progress
+                // Google's shape (issue #609): back to the map with a frame over it; pan and pinch
+                // choose the area, the card under it shows the size and downloads.
+                vm.startAreaPick()
+                onCloseSettings()
             },
             enabled = vm.hasViewport(),
         ) { Text(stringResource(R.string.settings_offline_download_viewport)) }
@@ -135,7 +137,69 @@ internal fun OfflineSettingsScreen(vm: MapViewModel, onBack: () -> Unit, onClose
                 onClick = { app.vela.ui.RegionUpdates.set(context, m) },
             )
         }
-        app.vela.ui.RegionUpdates.lastResult.value?.let { Hint(it) }
+         app.vela.ui.RegionUpdates.lastResult.value?.let { Hint(it) }
+         }
+        // Viewed places kept on the phone for offline opens (details, reviews, photos).
+        SettingsGroup(title = stringResource(R.string.settings_offline_cached_places)) {
+        ToggleRow(
+            label = stringResource(R.string.settings_offline_cached_places),
+            checked = app.vela.ui.OfflinePlaces.on.value,
+            onCheckedChange = { app.vela.ui.OfflinePlaces.set(context, it) },
+            hint = stringResource(R.string.settings_offline_cached_places_hint),
+        )
+        GroupDivider()
+        var placeCacheTick by remember { mutableStateOf(0) }
+        val placeCacheBytes = remember(placeCacheTick) {
+            app.vela.core.data.PlaceCache.dirSizeBytes(java.io.File(context.filesDir, "placecache"))
+        }
+        val placeCacheText = remember(placeCacheBytes) {
+            if (placeCacheBytes < 1024 * 1024) "${placeCacheBytes / 1024} KB"
+            else fmtMb((placeCacheBytes / 1048576).toInt())
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.settings_offline_cached_places_used, placeCacheText),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            FilledTonalButton(
+                onClick = {
+                    app.vela.core.data.PlaceCache.clear(java.io.File(context.filesDir, "placecache"))
+                    placeCacheTick++
+                },
+                modifier = Modifier.dpadHighlight(androidx.compose.foundation.shape.CircleShape),
+            ) { Text(stringResource(R.string.settings_offline_cached_places_clear)) }
+        }
+        // Viewed panoramas kept for offline Street View (one equirect per pano).
+        val svCacheBytes = remember(placeCacheTick) {
+            app.vela.core.data.StreetViewCache.dirSizeBytes(java.io.File(context.filesDir, "svcache"))
+        }
+        val svCacheText = remember(svCacheBytes) {
+            if (svCacheBytes < 1024 * 1024) "${svCacheBytes / 1024} KB"
+            else fmtMb((svCacheBytes / 1048576).toInt())
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.settings_offline_cached_sv_used, svCacheText),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            FilledTonalButton(
+                onClick = {
+                    app.vela.core.data.StreetViewCache.clear(java.io.File(context.filesDir, "svcache"))
+                    placeCacheTick++
+                },
+                modifier = Modifier.dpadHighlight(androidx.compose.foundation.shape.CircleShape),
+            ) { Text(stringResource(R.string.settings_offline_cached_sv_clear)) }
+        }
         }
         if (regions.isNotEmpty() && offlineAddrCount == 0) {
             Surface(
@@ -471,6 +535,7 @@ private fun RegionRow(
     val installed = region.id in state.routingInstalledIds
     val downloading = state.routingDownloadingId == region.id
     val packDownloading = state.poiPackDownloadingId == region.id
+    val updating = state.regionUpdatingId == region.id && !downloading && !packDownloading
     val packInstalled = region.id in state.poiPackInstalledIds
     // A fresher pack is published than the one installed → offer an in-place update
     // (a small row-level delta when the manifest carries one, else a full re-download).
@@ -490,6 +555,7 @@ private fun RegionRow(
                 (if (subtitleSuffix != null) "$subtitleSuffix · " else "") + when {
                     downloading -> stringResource(R.string.settings_routing_downloading, state.routingDownloadPct)
                     packDownloading -> stringResource(R.string.settings_routing_places_downloading, state.poiPackDownloadPct)
+                    updating -> stringResource(R.string.settings_routing_updating, state.regionFilePct)
                     updateAvailable -> stringResource(R.string.settings_routing_update_available)
                     installed && packInstalled -> stringResource(R.string.settings_routing_installed_places)
                     installed -> stringResource(R.string.settings_routing_installed)
@@ -506,7 +572,7 @@ private fun RegionRow(
         // the highlight doesn't teleport to the top of the page (user report).
         val keeper = rememberDpadFocusKeeper()
         when {
-            downloading || packDownloading -> Row(verticalAlignment = Alignment.CenterVertically) {
+            downloading || packDownloading || updating -> Row(verticalAlignment = Alignment.CenterVertically) {
                 DpadFocusHandoff(keeper)
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 androidx.compose.material3.TextButton(
@@ -518,7 +584,7 @@ private fun RegionRow(
                 DpadFocusHandoff(keeper)
                 FilledTonalButton(
                     onClick = { vm.updateRegion(region) },
-                    enabled = state.routingDownloadingId == null && state.poiPackDownloadingId == null,
+                    enabled = state.routingDownloadingId == null && state.poiPackDownloadingId == null && state.regionUpdatingId == null,
                     modifier = Modifier.dpadFocusKept(keeper),
                 ) { Text(stringResource(R.string.settings_update_region)) }
                 IconButton(onClick = { vm.deleteRoutingGraph(region.id) }) {

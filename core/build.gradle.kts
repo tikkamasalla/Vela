@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.hilt)
@@ -13,7 +12,7 @@ android {
         // engine on the JVM, and its android.util.Log lines would otherwise throw "not mocked".
         unitTests.isReturnDefaultValues = true
     }
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
@@ -22,7 +21,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
@@ -44,7 +42,9 @@ dependencies {
     // Maven jar duplicates the platform's XmlPullParser interfaces and R8 hard-fails on the
     // library/program split ("Library class android.content.res.XmlResourceParser implements
     // program class org.xmlpull.v1.XmlPullParser").
-    implementation(files("libs/osmand-java.jar", "libs/osmand-shared-jvm.jar", "libs/gnu-trove-osmand.jar", "libs/kxml2-vela.jar"))
+    // osmand-java.jar comes through :osmand-shaded (its protobuf relocated, so Cronet's can coexist).
+    implementation(project(mapOf("path" to ":osmand-shaded", "configuration" to "shadow")))
+    implementation(files("libs/osmand-shared-jvm.jar", "libs/gnu-trove-osmand.jar", "libs/kxml2-vela.jar"))
     implementation("commons-logging:commons-logging:1.2")
 
     implementation(libs.hilt.android)
@@ -64,4 +64,6 @@ tasks.withType<Test>().configureEach {
     System.getProperty("velaSeg")?.let { systemProperty("velaSeg", it) }
     System.getProperty("velaProbe")?.let { systemProperty("velaProbe", it) }
     System.getProperty("velaObf")?.let { systemProperty("velaObf", it) }
+    System.getProperty("velaLive")?.let { systemProperty("velaLive", it) }
+    System.getProperty("velaFeedProbe")?.let { systemProperty("velaFeedProbe", it) }
 }

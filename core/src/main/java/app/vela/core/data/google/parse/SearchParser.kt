@@ -276,17 +276,25 @@ object SearchParser {
      *  **duplicated**, so we de-dup. Big/landmark places additionally carry a small
      *  "gallery preview" at `[1][204][0]` (URL leaf `[1][2][0][0]`); we fold those in where
      *  present. The full gallery (~30+) is **login-gated** now (see [PhotosParser]) — this is
-     *  the most photos available keyless. De-dup by the re-sized URL so the hero never repeats. */
+     *  the most photos available keyless. De-dup by the re-sized URL so the hero never repeats.
+     *  Result rows render at ~110dp tall, so request small crops (w320) — the old w500-h350
+     *  payloads decoded ~3x the pixels the list ever shows (scroll jank, user report). */
     private fun parsePhotos(entry: JsonElement, paths: Map<String, List<Int>>): List<String> {
         val urls = LinkedHashSet<String>()
         fun add(u: String?) {
             if (u != null && u.contains("googleusercontent"))
-                urls += u.replace(Regex("=w\\d+-h\\d+.*$"), "=w500-h350")
+                urls += u.replace(Regex("=w\\d+-h\\d+.*$"), "=w320-h220")
         }
         entry.atPath(pathOf(paths, "photos")).arr()?.forEach { add(it.at(6, 0).str()) }
         entry.at(1, 204, 0).arr()?.forEach { add(it.at(1, 2, 0, 0).str()) }
+        // Shape-drift fallback: photo URLs carry the distinctive /p/ marker — sweep the
+        // serialized entry so a moved photos block can't silently zero the list. The /p/
+        // gate keeps review avatars (/a/) and tiles out; de-dup absorbs path hits.
+        PHOTO_URL.findAll(entry.toString()).forEach { add("https://" + it.value.replace("\\/", "/")) }
         return urls.take(12)
     }
+
+    private val PHOTO_URL = Regex("""lh3\.googleusercontent\.com[\\/]+p/[A-Za-z0-9_\-]+=[^"\\\s]*""")
 
     /** Drop a leading business-name from a formatted address ("Safeway, 1451 W Covell Blvd" to "1451 ...").
      *  The sheet shows the name on its own line, so a name-prefixed address reads it twice. Strips ONLY

@@ -20,6 +20,7 @@ import javax.inject.Inject
 @HiltAndroidApp
 class VelaApp : Application(), coil.ImageLoaderFactory {
     @Inject lateinit var diag: DiagLog
+    @Inject lateinit var http: okhttp3.OkHttpClient
 
     /** Coil with a HARD memory-cache cap. The default budget is ~25% of the app's heap CLASS,
      *  and largeHeap makes that class huge - on a 512 MB large heap Coil happily retains up to
@@ -28,6 +29,9 @@ class VelaApp : Application(), coil.ImageLoaderFactory {
      *  Dalvik heap 14 -> 94 MB). 48 MB still holds a couple of screens of thumbnails + a hero
      *  or two; everything else re-decodes from Coil's disk cache, which is untouched. */
     override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
+        // The shared client (Google hosts go over Cronet and are counted), with Chrome's image
+        // headers put on Google image requests first; Coil's own client said "okhttp/4.12.0".
+        .okHttpClient { http.newBuilder().apply { interceptors().add(0, app.vela.core.net.GoogleTransport.imageHeaders) }.build() }
         .memoryCache {
             coil.memory.MemoryCache.Builder(this)
                 .maxSizeBytes(if (app.vela.ui.MemoryPressure.lowRam) 16 * 1024 * 1024 else 48 * 1024 * 1024)
@@ -61,10 +65,42 @@ class VelaApp : Application(), coil.ImageLoaderFactory {
         super.onCreate()
         // Device memory class first: the Coil cap and the eager-warm decisions read it.
         app.vela.ui.MemoryPressure.init(this)
+        app.vela.ui.SpeechPreload.init(this) // after MemoryPressure: its default reads the RAM tier
+        app.vela.ui.FullPlaceLoad.init(this)
+        // Google-host requests over Chrome's network stack (Cronet), built lazily on the first one.
+        // Calibration `useCronet` 0, or an engine that fails to build, leaves them on OkHttp.
+        // Before Cronet opens its cache: a due rotation deletes it (Settings > Privacy).
+        app.vela.web.SessionRotation.init(this)
+        app.vela.web.GoogleStanding.init(this)
+        app.vela.web.GoogleTelemetry.init(this)
+        app.vela.diag.GoogleUsageStore.init(this) // Settings > Privacy > Requests to Google
+        // adb-only: `setprop debug.vela.tune.feedDump 1` saves raw review-feed replies to
+        // Android/data/app.vela/files/feeddump/ (ReviewFeedDebug). Never on otherwise.
+        if (app.vela.ui.AppTune.on("feedDump", false)) {
+            val dir = getExternalFilesDir("feeddump")
+            app.vela.core.data.google.ReviewFeedDebug.sink = { raw ->
+                dir?.let { java.io.File(it, "qv9Egd-${System.currentTimeMillis()}.txt").writeText(raw) }
+            }
+        }
+        // adb-only: `setprop debug.vela.tune.netLog 1` also opens the WebViews to Chrome's remote
+        // inspector (adb forward to webview_devtools_remote_<pid>), for reading their real headers.
+        if (app.vela.ui.AppTune.on("netLog", false)) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+        app.vela.web.SessionRotation.appJar = http.cookieJar as? app.vela.core.di.ResettableCookieJar
+        app.vela.net.CronetHolder.init(this)
+        app.vela.core.net.GoogleTransport.interceptor = app.vela.net.CronetTransport(http.cookieJar, app.vela.web.WebViewCookieJar())
         // Push the device class down to :core, which cannot read an :app holder (same seam as
         // CategoryFilter.enabled). Gates the ambient POI fan-out in GoogleMapsDataSource.
         app.vela.core.data.LowRamMode.enabled = app.vela.ui.MemoryPressure.lowRam
         Units.init(this)
+        // The desktop window size Google's requests describe: picked once per install, then kept
+        // (a size that changed per launch would be its own oddity). See BrowserViewport.
+        run {
+            val p = getSharedPreferences("vela_settings", MODE_PRIVATE)
+            val idx = p.getInt("browser_viewport", -1).takeIf { it >= 0 }
+                ?: kotlin.random.Random.nextInt(app.vela.core.data.google.BrowserViewport.CHOICES.size).also { p.edit().putInt("browser_viewport", it).apply() }
+            val (w, h) = app.vela.core.data.google.BrowserViewport.choice(idx)
+            app.vela.core.data.google.BrowserViewport.set(w, h)
+        }
         app.vela.ui.Clock24.refresh(this) // the 12/24-hour clock setting (issue #357); MainActivity refreshes it on resume
         AppTheme.init(this)
         DynamicColor.init(this)
@@ -106,6 +142,7 @@ class VelaApp : Application(), coil.ImageLoaderFactory {
         app.vela.ui.LiveReviews.init(this)
         app.vela.ui.ShowReviews.init(this)
         app.vela.ui.LoadPhotos.init(this)
+        app.vela.ui.OfflinePlaces.init(this)
         app.vela.ui.HideAdult.init(this)
         app.vela.ui.HideExternalLinks.init(this)
         app.vela.ui.GoogleFree.init(this) // "Use Vela without Google": mirrors into the :core NoGoogle flag
@@ -116,6 +153,7 @@ class VelaApp : Application(), coil.ImageLoaderFactory {
         app.vela.ui.HouseNumbers.init(this) // house-number zoom gate (issue #329)
         app.vela.ui.PreferButtons.init(this)
         app.vela.ui.PauseInBar.init(this)
+        app.vela.ui.LowPowerNav.init(this) // lock-screen low-power nav overlay, off by default
         app.vela.ui.FasterRouteAuto.init(this)
         app.vela.ui.RegionUpdates.init(this)
         app.vela.ui.BuildingOverlay.init(this)

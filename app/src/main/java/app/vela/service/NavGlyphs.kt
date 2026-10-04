@@ -10,13 +10,13 @@ import app.vela.core.model.ManeuverType
 
 /**
  * Canvas-drawn maneuver arrows for the nav notification's large icon (a white glyph on the
- * Vela-teal rounded square, Google-Maps style). The in-app banner glyphs are Compose
+ * Google-Blue rounded square, Google-Maps style). The in-app banner glyphs are Compose
  * ImageVectors, which can't be rasterized outside a composition, so the notification draws
  * its own small set here. Geometry is on a 0..96 grid scaled to the requested pixel size.
  */
 object NavGlyphs {
 
-    const val TEAL = 0xFF14857A.toInt() // ui.theme.VelaTeal; also the notification accent
+    const val TEAL = 0xFF1A73E8.toInt() // ui.theme.VelaTeal; also the notification accent
 
     fun bitmap(type: ManeuverType, sizePx: Int, background: Int = TEAL): Bitmap {
         val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)

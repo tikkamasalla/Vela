@@ -200,7 +200,7 @@ class NavigationService : Service() {
             s.route?.maneuvers?.getOrNull(s.nav.stepIndex)?.type
         }
         // Material You (issue #15): the arrow tile + accent row follow the system accent when
-        // the user opted into dynamic color; Vela teal otherwise (matches the in-app theme).
+        // the user opted into dynamic color; Google Blue otherwise (matches the in-app theme).
         val accent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && DynamicColor.isOn(this)) {
             getColor(android.R.color.system_accent1_600)
         } else {
@@ -218,7 +218,7 @@ class NavigationService : Service() {
             .setContentTitle(title)
             .setContentText(text)
             .setLargeIcon(largeIcon)
-            .setColor(accent) // dynamic accent when Material You is on, VelaTeal otherwise
+            .setColor(accent) // dynamic accent when Material You is on, Google Blue otherwise
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false) // the post time is noise on a continuously-updating nav card
@@ -411,7 +411,7 @@ class NavigationService : Service() {
 
         /** The live-update bar's color for road that is not congested: the route line's own blue,
          *  so the notification and the map agree about what the drive looks like. */
-        private const val TRAFFIC_CLEAR = 0xFF1F6FEB.toInt()
+        private const val TRAFFIC_CLEAR = 0xFF1A73E8.toInt()
         private const val TURN_ALERT_ID = 43
         private const val TURN_ALERT_TIMEOUT_MS = 9_000L
 

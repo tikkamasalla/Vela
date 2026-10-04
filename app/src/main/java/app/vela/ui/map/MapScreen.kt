@@ -32,6 +32,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,7 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.PublicOff
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material.icons.filled.Hotel
@@ -82,6 +84,10 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.layout.FlowRow
@@ -132,6 +138,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.drawWithContent
 import kotlin.math.roundToInt
 import androidx.compose.ui.geometry.Offset
@@ -203,6 +210,7 @@ import app.vela.ui.placeStatusColor
 import app.vela.ui.Traffic
 import app.vela.ui.place.DirectionsPanel
 import app.vela.ui.place.PlaceSheet
+import app.vela.ui.place.sharePlaceUrl
 import app.vela.ui.place.sheetDragGestures
 import app.vela.ui.search.SearchBar
 import java.util.Locale
@@ -487,6 +495,8 @@ fun MapScreen(
     var filteredResultIds by remember { mutableStateOf<Set<String>?>(null) }
     // True while the place sheet sits at its EXPANDED detent (covers the search bar).
     var placeSheetExpanded by remember { mutableStateOf(false) }
+    // Deep tab request for the sheet (results' Menu button). Consumed once by PlaceTabs.
+    var sheetTab by remember { mutableStateOf<String?>(null) }
     // The sheet's live TOP edge in root px (0 = not measured). The layers button keys its
     // visibility off this: shown while a POI is minimized whenever the button's own corner
     // actually clears the sheet - a measured overlap test, not an orientation/height guess,
@@ -583,6 +593,7 @@ fun MapScreen(
     // left the speedo half-covered by the bar (GitHub issue #2). Falls back to the old constant until
     // the first layout pass measures it.
     var navBarHeightPx by remember { mutableStateOf(0) }
+    var navBarTopPx by remember { mutableStateOf(0f) } // the bar's top edge in window px; passed street bubbles fade out above it
     // The step sheet is the nav bar with its list well open: a committing drag hands over the
     // lift (how far the well is already open) and the sheet grows the rest of the way; closing
     // shrinks the well to nothing before the bar takes over again.
@@ -610,12 +621,13 @@ fun MapScreen(
     // search overlay is up over an engaged map. Order: cancel map-pick → disengage map →
     // close search → peel nav/route/place/results.
     BackHandler(
-        enabled = mapEngaged || searchOpen || state.showSteps || state.navigating || state.transitNav != null ||
+        enabled = mapEngaged || searchOpen || state.showSteps || state.navigating || state.transitNav != null || state.areaPicking ||
             state.directionsOpen || state.activeRoute != null || state.routes.isNotEmpty() ||
             state.selected != null ||
             state.results.isNotEmpty(),
     ) {
         when {
+            state.areaPicking -> vm.cancelAreaPick()
             state.transitNav != null -> vm.endTransitNav()
             state.pickOnMap != null -> vm.cancelChooseOnMap()
             altsOpen && state.directionsOpen && !searchOpen && !state.navigating && !state.showSteps && !state.editingStops -> altsOpen = false
@@ -1070,6 +1082,7 @@ fun MapScreen(
             cameraLeftInset = cameraLeftInset,
             topCardBottomPx = topCardBottomPx,
             navBannerBottomPx = navBannerBottomPx,
+            navBarTopPx = navBarTopPx,
             navOverviewTick = navOverviewTick,
             navRecenterTick = navRecenterTick,
             screenHeightPx = screenHeightPx,
@@ -1257,13 +1270,7 @@ fun MapScreen(
         // and until the ticker has reported a puck position.
         val roadLabelMode = app.vela.ui.RoadLabel.mode.value
         if (state.navigating && !pipUi && state.previewStepIndex == null && roadLabelMode != app.vela.ui.RoadLabel.OFF && roadLabelMode != app.vela.ui.RoadLabel.IN_BAR) {
-            val liveIdx = state.nav.stepIndex
-            // The road you are ON right now: the leg's road, or the last silent rename already
-            // passed on it (traveled = leg length minus what is left to the next turn).
-            val onRoad = state.activeRoute?.maneuvers?.getOrNull(liveIdx - 1)?.let { m ->
-                val (name, ref) = m.roadAt(m.distanceMeters - state.nav.distanceToNextManeuver)
-                ref?.takeIf { r -> r.isNotBlank() } ?: name?.takeIf { r -> r.isNotBlank() }
-            }
+            val onRoad = navRoadLabel(state)
             // Composition reads only "do we have a position"; the value itself is read in layout.
             val havePuck = puckScreen.value != null
             if (onRoad != null && (havePuck || roadLabelMode == app.vela.ui.RoadLabel.BAR)) {
@@ -1323,7 +1330,7 @@ fun MapScreen(
         }
         if (state.navigating) {
             NavTurnBanner(state, vm, landscapeChrome, sidePanelWidthDp) { navBannerBottomPx = it }
-        } else if (state.pickOnMap == null && state.transitNav == null) {
+        } else if (state.pickOnMap == null && state.transitNav == null && !state.areaPicking) {
             // (Hidden during transit step-by-step guidance too — its bottom pane owns the screen
             // with the map above it, and a floating search bar over the guided map read as
             // browse-mode clutter once the pane stopped being full-screen, issue #232.)
@@ -1334,6 +1341,7 @@ fun MapScreen(
             Box(
                 Modifier
                     .align(Alignment.TopCenter)
+                    .zIndex(10f)
                     .then(
                         if (searchOpen) {
                             // Same fixed sheet gray as the place sheet / results rows,
@@ -1765,7 +1773,7 @@ fun MapScreen(
                 maxListHeight = if (state.navigating) stepsListMax else null,
                 stopsRow = if (state.navigating) {
                     val labels = vm.navRemainingStopLabels()
-                    if (labels.isEmpty()) null else ({ app.vela.ui.nav.NavStopsRow(labels, onEdit = vm::openStopsEditor) })
+                    ({ app.vela.ui.nav.NavStopsRow(labels, onEdit = vm::openStopsEditor, onRemoveNext = vm::removeNextStop) })
                 } else null,
                 // During nav the sheet wears the bar's own top, so bar -> sheet -> bar is one
                 // surface changing height; the chevron points down and closes.
@@ -1851,6 +1859,7 @@ fun MapScreen(
                     ).joinToString(" · "),
                     onAdd = vm::confirmNavTapStop,
                     onDismiss = vm::dismissNavTapStop,
+                    onRemove = if (vm.navTapCandidateIsStop()) vm::removeNavTapStop else null,
                     // Reaching the button takes more presses on a key-driven phone than a thumb
                     // needs, so the offer waits longer there.
                     autoDismissMs = if (dpadMode) 25_000L else 10_000L,
@@ -1912,7 +1921,7 @@ fun MapScreen(
                                 val stops = vm.navRemainingStops().map { it.location to it.label }
                                 if (r == null || stops.isEmpty()) emptyList() else app.vela.core.nav.RouteStops.legStarts(r, stops)
                             },
-                            stopsRow = if (stopLabels.isEmpty()) null else ({ app.vela.ui.nav.NavStopsRow(stopLabels, onEdit = vm::openStopsEditor) }),
+                            stopsRow = { app.vela.ui.nav.NavStopsRow(stopLabels, onEdit = vm::openStopsEditor, onRemoveNext = vm::removeNextStop) },
                         )
                     },
                     trafficRatio = state.activeRoute?.trafficRatio,
@@ -1920,7 +1929,10 @@ fun MapScreen(
                     onPause = if (navPauseInBar) vm::toggleNavPause else null,
                     // Measured AFTER the padding → the bar surface itself; navBarClearance adds the
                     // padding + gap back. Everything stacked above the bar keys off this.
-                    modifier = Modifier.onGloballyPositioned { navBarHeightPx = it.size.height },
+                    modifier = Modifier.onGloballyPositioned {
+                        navBarHeightPx = it.size.height
+                        navBarTopPx = it.boundsInWindow().top
+                    },
                 )
             }
 
@@ -2084,7 +2096,12 @@ fun MapScreen(
                 reviews = state.reviews,
                 reviewsLoading = state.reviewsLoading,
                 reviewsFound = state.reviewsFound,
+                reviewsLimited = state.reviewsLimited,
+                onMoreReviews = if (state.reviewsNextToken != null) vm::loadMoreReviews else null,
+                reviewsMoreLoading = state.reviewsMoreLoading,
                 photosLoading = state.photosLoading,
+                morePhotos = state.morePhotosFor != null && state.morePhotosFor == state.selected?.featureId,
+                onMorePhotos = vm::loadAllPhotos,
                 detailsLoading = state.loadingDetails,
                 placesHere = state.placesHere,
                 // Ownership-gated: a board renders ONLY on the place it was fetched for. Writers
@@ -2105,6 +2122,7 @@ fun MapScreen(
                 onOpenSimilar = vm::openSimilar,
                 onSetShortcut = vm::setSelectedAsShortcut,
                 onRetryReviews = vm::retryReviews,
+                onNeedReviews = vm::ensureReviews,
                 onClearParking = {
                     vm.clearParkingSpot()
                     vm.clearSelection()
@@ -2115,6 +2133,8 @@ fun MapScreen(
                 onRemoveFromList = { listId -> vm.removePlaceFromList(listId, state.selected!!) },
                 onCreateListWith = { name -> val id = vm.createList(name); vm.addPlaceToList(id, state.selected!!) },
                 onSetNote = { note -> vm.setPlaceNote(state.selected!!, note) },
+                openTab = sheetTab,
+                onOpenTabConsumed = { sheetTab = null },
                 minimizeTick = sheetPanTick,
                 // No navigationBarsPadding here: the sheet's background should reach
                 // the screen bottom (no map peeking through under the nav bar); the
@@ -2156,6 +2176,35 @@ fun MapScreen(
                 moreAvailable = state.resultsMoreQuery != null && state.resultsMoreQuery == state.query && state.openListId == null && state.pendingImport == null,
                 loadingMore = state.resultsLoadingMore,
                 onMore = vm::loadMoreResults,
+                onActionDirections = { p ->
+                    focusManager.clearFocus()
+                    vm.selectPlace(p)
+                    vm.routeToSelected()
+                },
+                onActionCall = { p ->
+                    val ph = p.phone ?: return@SearchResults
+                    val dialable = "tel:" + ph.filter { it.isDigit() || it == '+' }
+                    runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(dialable))) }
+                },
+                onActionShare = { p ->
+                    val url = sharePlaceUrl(p)
+                    runCatching {
+                        context.startActivity(
+                            Intent.createChooser(
+                                Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, url)
+                                },
+                                context.getString(R.string.place_share_place),
+                            ),
+                        )
+                    }
+                },
+                onActionMenu = { p ->
+                    focusManager.clearFocus()
+                    sheetTab = "Menu"
+                    vm.selectPlace(p)
+                },
                 // Landscape: left side panel like the place sheet (see its modifier note).
                 modifier = Modifier
                     .align(if (landscapeChrome) Alignment.BottomStart else Alignment.BottomCenter)
@@ -2360,7 +2409,7 @@ fun MapScreen(
                 Icon(Icons.Default.MyLocation, contentDescription = stringResource(R.string.mapscreen_center_on_my_location))
             }
             // Parking button, its OWN control above the locate FAB. TAP with NO spot → save here
-            // (the one-tap "I parked" path). TAP with a spot set (teal) → a small hub menu (Find my
+            // (the one-tap "I parked" path). TAP with a spot set (blue) → a small hub menu (Find my
             // car / Move parking here / Earlier spots / Clear) so re-parking is one obvious choice
             // instead of the old clear-then-tap-again dance (user 2026-07-11: "setting parking again
             // when you already have a spot is clunky"). LONG-PRESS still jumps straight to history.
@@ -2618,7 +2667,7 @@ fun MapScreen(
             // the search bar and never reaches this corner at ANY detent.
             // Not over the route chooser either (issue #405): the endpoints card owns that corner
             // and a map-style button beside a route list is noise.
-            if (app.vela.ui.LayersButton.on.value && !searchOpen && !state.directionsOpen &&
+            if (app.vela.ui.LayersButton.on.value && !searchOpen && !state.directionsOpen && !state.areaPicking &&
                 !state.navigating && !state.replaying &&
                 (!resultsShown || landscapeChrome) &&
                 clearOfPlaceSheet
@@ -2697,7 +2746,7 @@ fun MapScreen(
         // whose height VARIES (lanes, "then" row) — so it hangs off the banner's MEASURED bottom
         // edge, the same navBannerBottomPx the compass uses, and slides with it.
         val downloadingVoiceId = state.voiceDownloadingId
-        val downloadingRegion = state.routingDownloadingId != null || state.poiPackDownloadingId != null
+        val downloadingRegion = state.routingDownloadingId != null || state.poiPackDownloadingId != null || state.regionFileStep != null
         val bareMap = gates.bareMap
         val fasterOffer = state.navigating && state.fasterRoute != null
         if (state.status != null || fasterOffer ||
@@ -2729,9 +2778,8 @@ fun MapScreen(
                         savingSeconds = state.fasterSavingSeconds,
                         onSwitch = vm::acceptFasterRoute,
                         onDismiss = vm::dismissFasterRoute,
-                        // Longer on a key-driven phone, where reaching either button is several
-                        // presses - the same allowance the tap-to-stop offer makes.
-                        // The same ten seconds however you drive the UI: focus stops the clock.
+                        // The same ten seconds however you drive the UI: focus on the card stops
+                        // the clock, so a key-driven phone has all the time it needs.
                         autoMs = 10_000L,
                         autoAccept = app.vela.ui.FasterRouteAuto.accept.value,
                         offerKey = state.fasterRoute ?: state.fasterSavingSeconds,
@@ -2793,7 +2841,12 @@ fun MapScreen(
                         RegionDownloadCard(
                             name = state.regionDownloadName ?: "",
                             places = state.poiPackDownloadingId != null,
-                            pct = if (state.poiPackDownloadingId != null) state.poiPackDownloadPct else state.routingDownloadPct,
+                            fileStep = state.regionFileStep,
+                            pct = when {
+                                state.poiPackDownloadingId != null -> state.poiPackDownloadPct
+                                state.regionFileStep != null -> state.regionFilePct
+                                else -> state.routingDownloadPct
+                            },
                             onCancel = { vm.cancelRegionDownload() },
                         )
                     }
@@ -2819,6 +2872,9 @@ fun MapScreen(
                 }
             }
         }
+        }
+        if (state.areaPicking && !pipUi) {
+            AreaPickOverlay(state, vm, zoomButtons = dpadMode || app.vela.ui.PreferButtons.on.value) { mapDpad.zoomBy(it) }
         }
         if (pipUi && state.navigating && state.maneuverText.isNotEmpty()) {
             // The one PiP overlay, Google's shape: the turn card's own green with the glyph, the
@@ -2863,6 +2919,31 @@ fun MapScreen(
                     }
                 }
             }
+            // The trip's own figures along the bottom, as Google's mini map shows them (user
+            // 2026-09-25): time left and arrival, the same numbers the nav bar shows. Distance is
+            // left out: at the mini window's width it only ever showed as a trailing "...".
+            androidx.compose.material3.Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(4.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ) {
+                val secs = state.nav.remainingDuration
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        formatDuration(secs),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                    Text(
+                        " · " + app.vela.ui.formatArrivalClock(secs),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
@@ -2877,11 +2958,11 @@ private const val ROUTE_PAUSED_COLOR = "#9C8AD6"
 
 private fun routeTrafficColor(route: app.vela.core.model.Route?): String =
     when (val ratio = route?.trafficRatio) {
-        null -> "#1F6FEB"
+        null -> "#1A73E8"
         else -> when {
             ratio > 1.4 -> "#D93838"  // heavy
             ratio > 1.15 -> "#E8923D" // moderate
-            else -> "#1F6FEB"          // light / free-flowing
+            else -> "#1A73E8"          // light / free-flowing
         }
     }
 
@@ -2955,6 +3036,10 @@ private fun SearchResults(
     moreAvailable: Boolean = false, // a "More results" row at the end of the list (next pages of the same search)
     loadingMore: Boolean = false,
     onMore: () -> Unit = {},
+    onActionDirections: (Place) -> Unit = {},
+    onActionCall: (Place) -> Unit = {},
+    onActionShare: (Place) -> Unit = {},
+    onActionMenu: (Place) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // A BOTTOM sheet, Google-style, sharing the place sheet's detent grammar:
@@ -2975,7 +3060,10 @@ private fun SearchResults(
     // Landscape (side-panel layout): expanded caps below the search bar - the full-width bar
     // deliberately stays in landscape, so the panel must stop under it, not slide beneath it.
     val resultsLandscape = LocalConfiguration.current.screenWidthDp > screenH
-    val expL = if (resultsLandscape) minOf(screenH * 0.82f, maxOf(screenH - 104f, screenH * 0.55f)) else screenH * 0.82f
+    // Expanded docks flush under the affixed search bar: full height minus the bar's own
+    // footprint (status bar + 56dp bar), so no map strip shows between bar and sheet.
+    val searchBarReserveDp = 56f + 24f
+    val expL = if (resultsLandscape) minOf(screenH * 0.82f, maxOf(screenH - 104f, screenH * 0.55f)) else (screenH - searchBarReserveDp).coerceAtLeast(screenH * 0.6f)
     val listH = remember { Animatable(if (collapsed) 0f else if (expanded) expL else peekL) }
     val resultsSettleSpec = remember { spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 350f) }
     // Dropping to the bar GLIDES on a soft spring — at the settle stiffness the pan-triggered
@@ -3090,6 +3178,14 @@ private fun SearchResults(
     // per result (see Place.wheelchairAccessible); the rest of Google's attribute filters
     // would need a details fetch per place.
     var accessibleOnly by remember { mutableStateOf(false) }
+    // Google-style extra filters: cuisine match, top-rated (4.5+), alongside the tier menus.
+    var cuisineFilter by remember { mutableStateOf<String?>(null) }
+    var topRatedOnly by remember { mutableStateOf(false) }
+    val cuisineOptions = remember(results) {
+        results.mapNotNull { it.category?.trim()?.takeIf { c -> c.isNotBlank() } }
+            .groupingBy { it }.eachCount().entries
+            .sortedByDescending { it.value }.take(8).map { it.key }
+    }
     // Google-style filters: currently open, 4.0★+, and price (≤ the chosen level).
     // "Open now" falls back to the WEEKLY HOURS when Google sent no live status (openNow == null) —
     // the multi-result response often omits the status string, and dropping those places made the
@@ -3105,6 +3201,15 @@ private fun SearchResults(
         .let { list -> if (minRating > 0.0) list.filter { (it.rating ?: 0.0) >= minRating } else list }
         .let { list -> if (priceMax > 0) list.filter { (it.priceLevel ?: Int.MAX_VALUE) <= priceMax } else list }
         .let { list -> if (accessibleOnly) list.filter { it.wheelchairAccessible } else list }
+        .let { list -> if (topRatedOnly) list.filter { (it.rating ?: 0.0) >= 4.5 } else list }
+        .let { list ->
+            val cf = cuisineFilter?.lowercase()
+            if (cf == null) list else list.filter { p ->
+                val cat = p.category?.lowercase() ?: ""
+                val words = cf.split(Regex("[^a-z]+")).filter { it.length > 2 }
+                cat.contains(cf) || words.any { w -> cat.contains(w) }
+            }
+        }
         .let { list ->
             when (sortMode) {
                 1 -> list.sortedByDescending { it.rating ?: -1.0 }
@@ -3113,18 +3218,22 @@ private fun SearchResults(
             }
         }
     // Tell the map which pins survived (sort doesn't change membership, so it isn't a key).
-    LaunchedEffect(openOnly, minRating, priceMax, accessibleOnly, results) {
+    LaunchedEffect(openOnly, minRating, priceMax, accessibleOnly, cuisineFilter, topRatedOnly, results) {
         onShownChange(
-            if (!openOnly && minRating == 0.0 && priceMax == 0 && !accessibleOnly) null
+            if (!openOnly && minRating == 0.0 && priceMax == 0 && !accessibleOnly && cuisineFilter == null && !topRatedOnly) null
             else shown.mapTo(HashSet()) { it.id },
         )
     }
     // Same fixed sheet gray as the place sheet, not the wallpaper-tinted Material card.
+    // Solid background: at full expansion no map bleeds through behind the rows.
     val dark = isAppInDarkTheme()
+    Box(
+        modifier.fillMaxWidth(),
+    ) {
     Card(
         // statusBarsPadding caps the sheet's growth below the status bar, so the handle pill
         // never slides under the clock / camera cutout when expanded (user 2026-07-09).
-        modifier.statusBarsPadding().padding(top = 8.dp).fillMaxWidth(),
+        Modifier.statusBarsPadding().padding(top = 8.dp).fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
         colors = CardDefaults.cardColors(containerColor = SheetPalette.bg(dark), contentColor = SheetPalette.ink(dark)),
     ) {
@@ -3234,21 +3343,19 @@ private fun SearchResults(
                 val chipsFraction: () -> Float = { (listH.value / 140f).coerceIn(0f, 1f) }
                 app.vela.ui.SheetFold(composed = !collapsed, fraction = chipsFraction) {
                 // Filter chips on their own horizontally-scrollable row, so a third (or
-                // future) chip never crowds the header or clips on a narrow screen. Filled pills
-                // (a subtle tint when off, solid teal when on) so they read modern on the sheet —
-                // the default outlined M3 chip looked "old" against the filled category chips
-                // (user 2026-07-08). No border; a check icon marks an active toggle.
-                // OPAQUE container colors: these are ELEVATED chips, and a translucent container
-                // let the elevation SHADOW show through the pill — invisible on the dark sheet but
-                // a muddy near-black blob on the light one (user report 2026-07-08). The solids are
-                // the translucent values composited over each sheet color.
+                // future) chip never crowds the header or clips on a narrow screen.
+                // LIST-VIEW chips are Google-style rounded rects (8dp), transparent with a
+                // 1px #5F6368 hairline; map-view category chips stay full pills (see
+                // CategoryChips). Selected list chips fill blue with dark-ink text.
                 val chipColors = FilterChipDefaults.elevatedFilterChipColors(
-                    containerColor = if (dark) Color(0xFF333539) else Color(0xFFF1F3F4),
-                    labelColor = SheetPalette.ink(dark),
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    labelColor = androidx.compose.ui.graphics.Color.White,
+                    selectedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    selectedLabelColor = androidx.compose.ui.graphics.Color.White,
+                    selectedLeadingIconColor = androidx.compose.ui.graphics.Color.White,
                 )
+                val listChipBorder = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF5F6368))
+                val listChipShape = androidx.compose.foundation.shape.CircleShape
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -3256,33 +3363,23 @@ private fun SearchResults(
                         .padding(start = 16.dp, end = 8.dp, bottom = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    ElevatedFilterChip(
-                        selected = openOnly,
-                        onClick = { openOnly = !openOnly },
-                        label = { Text(stringResource(R.string.mapscreen_filter_open_now)) },
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        colors = chipColors,
-                        border = null,
-                        leadingIcon = if (openOnly) {
-                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                        } else null,
-                    )
-                    // Sort: a menu (Relevance / Rating / Distance). LEFT of the filters like
-                    // Google's results header (user 2026-07-13).
+                    // Sort FIRST like Google (Relevance / Rating / Distance menu): a sort is
+                    // always active, so the chip always reads selected (filled), labeled with
+                    // the current mode. Relevance is the default.
                     Box {
                         ElevatedFilterChip(
-                            selected = sortMode > 0,
+                            selected = true,
                             onClick = { sortMenu = true },
                             label = {
                                 Text(
                                     when (sortMode) {
                                         1 -> stringResource(R.string.mapscreen_sort_rating)
                                         2 -> stringResource(R.string.mapscreen_sort_distance)
-                                        else -> stringResource(R.string.mapscreen_sort)
+                                        else -> stringResource(R.string.mapscreen_sort_relevance)
                                     },
                                 )
                             },
-                            shape = androidx.compose.foundation.shape.CircleShape,
+                            shape = listChipShape,
                             colors = chipColors,
                             border = null,
                             trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
@@ -3293,6 +3390,52 @@ private fun SearchResults(
                             item(stringResource(R.string.mapscreen_sort_distance_item)) { sortMode = 2; sortMenu = false }
                         }
                     }
+                    // Open now after the sort, Google order.
+                    // List-view chips are hairline-bordered pills; selected chips fill
+                    // container-high.
+                    ElevatedFilterChip(
+                        selected = openOnly,
+                        onClick = { openOnly = !openOnly },
+                        label = { Text(stringResource(R.string.mapscreen_filter_open_now)) },
+                        shape = listChipShape,
+                        colors = chipColors,
+                        border = if (openOnly) null else listChipBorder,
+                        leadingIcon = if (openOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null,
+                    )
+                    // Cuisine + Price + Top-rated, Google-style: extra filter menus beside sort.
+                    // They filter by category match (cuisine), price ceiling (price) and the 4.5+
+                    // top tier (top-rated); ratingMenu keeps the full tier list.
+                    var cuisineMenu by remember { mutableStateOf(false) }
+                    Box {
+                        ElevatedFilterChip(
+                            selected = cuisineFilter != null,
+                            onClick = { cuisineMenu = true },
+                            label = { Text(cuisineFilter ?: stringResource(R.string.mapscreen_filter_cuisine)) },
+                            shape = listChipShape,
+                            colors = chipColors,
+                            border = if (cuisineFilter != null) null else listChipBorder,
+                            trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        )
+                        VelaMenu(expanded = cuisineMenu, onDismissRequest = { cuisineMenu = false }) {
+                            item(stringResource(R.string.mapscreen_filter_any_cuisine)) { cuisineFilter = null; cuisineMenu = false }
+                            cuisineOptions.forEach { c ->
+                                item(c) { cuisineFilter = c; cuisineMenu = false }
+                            }
+                        }
+                    }
+                    ElevatedFilterChip(
+                        selected = topRatedOnly,
+                        onClick = { topRatedOnly = !topRatedOnly },
+                        label = { Text(stringResource(R.string.mapscreen_filter_top_rated_chip)) },
+                        shape = listChipShape,
+                        colors = chipColors,
+                        border = if (topRatedOnly) null else listChipBorder,
+                        leadingIcon = if (topRatedOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        } else null,
+                    )
                     // Rating floor: a MENU of Google's tiers (3.5+/4.0+/4.5+) — the old fixed
                     // 4.0★ toggle couldn't say what it did or offer another bar.
                     Box {
@@ -3300,9 +3443,9 @@ private fun SearchResults(
                             selected = minRating > 0.0,
                             onClick = { ratingMenu = true },
                             label = { Text(if (minRating > 0.0) String.format(Locale.US, "%.1f+ ★", minRating) else stringResource(R.string.mapscreen_filter_rating)) },
-                            shape = androidx.compose.foundation.shape.CircleShape,
+                            shape = listChipShape,
                             colors = chipColors,
-                            border = null,
+                            border = if (minRating > 0.0) null else listChipBorder,
                             trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
                         )
                         VelaMenu(expanded = ratingMenu, onDismissRequest = { ratingMenu = false }) {
@@ -3318,9 +3461,9 @@ private fun SearchResults(
                             selected = priceMax > 0,
                             onClick = { priceMenu = true },
                             label = { Text(if (priceMax == 0) stringResource(R.string.mapscreen_filter_price) else "≤ " + "$".repeat(priceMax)) },
-                            shape = androidx.compose.foundation.shape.CircleShape,
+                            shape = listChipShape,
                             colors = chipColors,
-                            border = null,
+                            border = if (priceMax > 0) null else listChipBorder,
                             trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
                         )
                         VelaMenu(expanded = priceMenu, onDismissRequest = { priceMenu = false }) {
@@ -3335,9 +3478,9 @@ private fun SearchResults(
                         selected = accessibleOnly,
                         onClick = { accessibleOnly = !accessibleOnly },
                         label = { Text(stringResource(R.string.mapscreen_filter_accessible)) },
-                        shape = androidx.compose.foundation.shape.CircleShape,
+                        shape = listChipShape,
                         colors = chipColors,
-                        border = null,
+                        border = if (accessibleOnly) null else listChipBorder,
                         leadingIcon = if (accessibleOnly) {
                             { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
                         } else null,
@@ -3358,14 +3501,59 @@ private fun SearchResults(
                     },
                 state = listState,
             ) {
-                items(shown) { place ->
+                // Thick black separation block between cards, Google-style (no 1px dividers).
+                // Interleaved card+separator ITEMS: one itemsIndexed block emits (card,
+                // separator) per index, so reorder/filter can never split them.
+                itemsIndexed(
+                    items = shown,
+                    key = { _, p -> p.id },
+                    contentType = { _, _ -> "card" },
+                ) { _, place ->
+                // Gallery is display-sized only: the w320-h220 search payloads decode at list
+                // size (400px wide cells) instead of full-res, which was the scroll jank.
+                val gallery = remember(place.id, place.photoUrls) { place.photoUrls.take(3) }
+                // Google-style result card: photo strip FIRST (full-bleed), then the text
+                // block, then the action pills. Cards breathe with a plain gap, no bars.
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .dpadHighlight(RoundedCornerShape(6.dp))
-                        .clickable { onPick(place) }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .clickable { onPick(place) },
                 ) {
+                    // Photo strip with GROUPED outer corners (16dp outside, square
+                    // where images touch), full-bleed above the text, Google-style.
+                    // Any photo at all shows: a single photo fills the strip.
+                    if (gallery.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            gallery.forEachIndexed { i, url ->
+                                val corners = when {
+                                    gallery.size == 1 -> RoundedCornerShape(16.dp)
+                                    i == 0 -> RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+                                    i == gallery.lastIndex -> RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+                                    else -> RoundedCornerShape(0.dp)
+                                }
+                                coil.compose.AsyncImage(
+                                    model = app.vela.ui.place.atWidth(url, 400),
+                                    contentDescription = null,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(110.dp)
+                                        .clip(corners)
+                                        .background(SheetPalette.dim(dark).copy(alpha = 0.2f)),
+                                )
+                            }
+                        }
+                    }
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(top = 14.dp),
+                    ) {
                     // Bigger, more legible rows (the address/category line read too
                     // small before): name at titleMedium, the secondary lines bumped
                     // from bodySmall→bodyMedium with a touch more breathing room.
@@ -3388,12 +3576,19 @@ private fun SearchResults(
                                     color = SheetPalette.dim(dark),
                                 )
                             }
+                            // Google puts the distance in the rating row ("4.2 ★★★★ (1,387) · 11 km").
+                            place.distanceMeters?.let {
+                                Text(
+                                    " · " + formatDistance(it),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SheetPalette.dim(dark),
+                                )
+                            }
                         }
                     }
                     val sub = listOfNotNull(
                         place.priceText,
                         place.category,
-                        place.distanceMeters?.let { formatDistance(it) },
                     ).joinToString(" · ")
                     if (sub.isNotEmpty()) {
                         Text(
@@ -3403,18 +3598,7 @@ private fun SearchResults(
                             modifier = Modifier.padding(top = 1.dp),
                         )
                     }
-                    // Full address (city/state/zip) to disambiguate similar names
-                    // and identical-looking residential addresses.
-                    place.address?.let { addr ->
-                        Text(
-                            addr,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SheetPalette.dim(dark),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 1.dp),
-                        )
-                    }
+                    // (No street address: Google's rows don't carry one.)
                     // Gas stations: the live price on its own line under the address, bold with a
                     // pump glyph in the title ink so it pops out of the row (user 2026-07-10).
                     place.fuelPrice?.let { fp ->
@@ -3446,11 +3630,12 @@ private fun SearchResults(
                             modifier = Modifier.padding(top = 3.dp),
                         )
                     } else place.statusText?.let { status ->
-                        Text(
+                        app.vela.ui.StatusText(
                             status,
+                            openNow = place.openNow,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
-                            color = placeStatusColor(status, place.openNow),
+                            dim = SheetPalette.dim(dark),
                             modifier = Modifier.padding(top = 3.dp),
                         )
                     }
@@ -3476,9 +3661,70 @@ private fun SearchResults(
                             )
                         }
                     }
-                }
-                Divider()
-            }
+                    // Google-style service checks ("✓ Dine-in · ✓ Takeout · ✓ Delivery")
+                    // under the hours, from the About fetch. Same source as the sheet's chips.
+                    val checks = remember(place.id, place.about) { app.vela.ui.place.attributeHighlights(place.about).take(3) }
+                    if (checks.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            checks.forEachIndexed { i, c ->
+                                if (i > 0) Text("·", style = MaterialTheme.typography.bodyMedium, color = SheetPalette.dim(dark))
+                                Icon(Icons.Default.Check, contentDescription = null, tint = SheetPalette.statusGreen(dark), modifier = Modifier.size(14.dp))
+                                Text(c, style = MaterialTheme.typography.bodyMedium, color = SheetPalette.dim(dark), maxLines = 1)
+                            }
+                        }
+                    }
+                    // Google-style per-row action buttons: Directions (filled) + Call/Share
+                    // (outlined). They act on the ROW's place directly, without opening it.
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ResultActionButton(
+                            icon = Icons.Default.Directions,
+                            label = stringResource(R.string.place_directions),
+                            primary = true,
+                            onClick = { onActionDirections(place) },
+                        )
+                        if (!place.phone.isNullOrBlank()) {
+                            ResultActionButton(
+                                icon = Icons.Default.Call,
+                                label = stringResource(R.string.place_call),
+                                primary = false,
+                                onClick = { onActionCall(place) },
+                            )
+                        }
+                        ResultActionButton(
+                            icon = Icons.Default.Share,
+                            label = stringResource(R.string.place_share),
+                            primary = false,
+                            onClick = { onActionShare(place) },
+                        )
+                        // Menu opens the sheet straight onto its Menu tab (Google's
+                        // row-level Menu button). Only when menu photos exist.
+                        if (app.vela.ui.place.hasMenuPhotos(place)) {
+                            ResultActionButton(
+                                icon = Icons.Default.List,
+                                label = stringResource(R.string.place_tab_menu),
+                                primary = false,
+                                onClick = { onActionMenu(place) },
+                            )
+                        }
+                    }
+                    } // text column (16dp inset)
+                    } // card column
+                    // Plain breathing gap between cards, Google-style (no bars/dividers).
+                    Spacer(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                            .height(8.dp),
+                    )
+                } // itemsIndexed cards + separators
                 // Next pages of the same search, on demand (the first fetch is three pages).
                 if (moreAvailable) item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
@@ -3491,6 +3737,82 @@ private fun SearchResults(
                 }
         }
             } // if (!collapsed) — list
+        } // Column(navigationBarsPadding)
+    } // Card
+            // "View map" extended FAB, Google-style: fixed bottom-end over the list, #303134
+            // pill with map glyph + #A8C7FA ink and a real shadow. Collapses the sheet to the
+            // count bar so the map shows again. Lives in the overlay Box scope (NOT inside the
+            // Column above) so BoxScope.align anchors it to the sheet's bottom-end above the list.
+            if (!collapsed) {
+                androidx.compose.material3.ExtendedFloatingActionButton(
+                    onClick = onMinimize,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(end = 16.dp, bottom = 16.dp)
+                        .dpadHighlight(RoundedCornerShape(16.dp)),
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF303134),
+                    contentColor = androidx.compose.ui.graphics.Color(0xFFA8C7FA),
+                    elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 6.dp,
+                        pressedElevation = 8.dp,
+                    ),
+                ) {
+                    Icon(
+                        Icons.Default.Map,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.mapscreen_view_map))
+                }
+            }
+    } // Box overlay for the list FAB
+} // SearchResults end
+
+/** Google result-card action: Directions is the filled primary pill (#A8C7FA bg,
+ *  #062E6F ink); Call/Share are transparent outlined pills (#5F6368 hairline, #A8C7FA ink). */
+@Composable
+private fun ResultActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    primary: Boolean,
+    onClick: () -> Unit,
+) {
+    val pill = androidx.compose.foundation.shape.CircleShape
+    if (primary) {
+        Row(
+            Modifier
+                .clip(pill)
+                .background(androidx.compose.ui.graphics.Color(0xFFA8C7FA))
+                .dpadHighlight(pill)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val ink = androidx.compose.ui.graphics.Color(0xFF062E6F)
+            Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = ink, maxLines = 1)
+        }
+    } else {
+        Row(
+            Modifier
+                .clip(pill)
+                .border(
+                    androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF5F6368)),
+                    pill,
+                )
+                .dpadHighlight(pill)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val ink = androidx.compose.ui.graphics.Color(0xFFA8C7FA)
+            Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = ink, maxLines = 1)
         }
     }
 }
@@ -3517,6 +3839,7 @@ private fun MapSurface(
     cameraLeftInset: Int,
     topCardBottomPx: Int,
     navBannerBottomPx: Int,
+    navBarTopPx: Float,
     navOverviewTick: Int,
     navRecenterTick: Int,
     screenHeightPx: Float,
@@ -3743,6 +4066,7 @@ private fun MapSurface(
         placesPending = state.placesPending,
         placesOneSet = state.placesOneSet,
         osmBusinesses = app.vela.ui.MapPoiPrefs.osmBusinesses.value,
+        hideCivic = !app.vela.ui.MapPoiPrefs.showCivic.value,
         // The exit you are taking, for the green callout on the map: only a numbered exit off
         // a ramp or a fork, and only while its own step is the one being guided.
         navTapPlaces = app.vela.ui.MapPoiPrefs.navTapPlaces.value,
@@ -3782,6 +4106,7 @@ private fun MapSurface(
         transitStops = state.transitStops.filterNot { st -> state.selected?.id == "gtfs:${st.stopId}" },
         onTransitStopTap = vm::onTransitStopTap,
         navBannerBottomPx = if (state.navigating) navBannerBottomPx else 0,
+        navBarTopPx = navBarTopPx,
         // Index into the SHOWN list (the same one ambientMarkersOf uploads), not the raw
         // pool - while a place is open the shown list drops the selected place's copy, so
         // raw-pool indices would be off by one past it.
@@ -4013,7 +4338,10 @@ private fun CategoryChips(onPick: (String) -> Unit, modifier: Modifier = Modifie
                 // read DARKER than the label. onSurfaceVariant matches the glyph weight to
                 // the text, like Google's rows.
                 colors = androidx.compose.material3.AssistChipDefaults.elevatedAssistChipColors(
-                    leadingIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Google chip text + glyphs read white, not dim grey.
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    labelColor = androidx.compose.ui.graphics.Color.White,
+                    leadingIconContentColor = androidx.compose.ui.graphics.Color.White,
                 ),
             )
         }
@@ -4934,7 +5262,7 @@ private fun VoiceDownloadCard(installing: Boolean, pct: Float, onCancel: (() -> 
  *  region's place pack. Mirrors [VoiceDownloadCard] so a Settings-started download stays visible
  *  on the map. */
 @Composable
-private fun RegionDownloadCard(name: String, places: Boolean, pct: Int, area: Boolean = false, onCancel: (() -> Unit)? = null, modifier: Modifier = Modifier) {
+private fun RegionDownloadCard(name: String, places: Boolean, pct: Int, area: Boolean = false, fileStep: Int? = null, onCancel: (() -> Unit)? = null, modifier: Modifier = Modifier) {
     Card(
         modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -4948,6 +5276,9 @@ private fun RegionDownloadCard(name: String, places: Boolean, pct: Int, area: Bo
                     when {
                         area -> stringResource(R.string.map_area_downloading, pct)
                         places -> stringResource(R.string.map_region_places_downloading, name, pct)
+                        fileStep == 1 -> stringResource(R.string.map_region_placesfile_downloading, name, pct)
+                        fileStep == 2 -> stringResource(R.string.map_region_map_downloading, name, pct)
+                        fileStep == 3 -> stringResource(R.string.map_region_satellite_downloading, name, pct)
                         else -> stringResource(R.string.map_region_downloading, name, pct)
                     },
                     fontWeight = FontWeight.SemiBold,
@@ -5123,9 +5454,13 @@ private fun FasterRouteCard(
         modifier
             .fillMaxWidth()
             .onFocusChanged { held = it.hasFocus },
+        // The same dress as every other card in the stack (update, downloads, notices) and the
+        // same pair as its own countdown bar (primary on secondaryContainer): it used to be the one
+        // tertiary card with a primary bar inside, which read as a different kind of thing
+        // (user 2026-09-23).
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ),
     ) {
         Row(
@@ -5140,22 +5475,19 @@ private fun FasterRouteCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            // Explicit contrast pairs, not the button defaults: under Material You the default
-            // TextButton primary and this card's tertiaryContainer both derive from the wallpaper
-            // and routinely land on near-identical pastels - the "No" all but vanished and the
-            // "Switch" fill could blend into the card (user 2026-07-14). onTertiaryContainer is
-            // contrast-guaranteed against tertiaryContainer in every scheme, so the dismiss reads
-            // everywhere, and the confirm wears the inverse fill for the same guarantee.
+            // The dismiss keeps an explicit contrast pair: under Material You a default primary
+            // TextButton can land on the same pastel as the card (the "No" all but vanished,
+            // user 2026-07-14); onSecondaryContainer is guaranteed against secondaryContainer. The
+            // confirm is the app's filled primary pill, like the update card's, in the same color
+            // as the countdown bar under it.
             TextButton(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onTertiaryContainer),
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
             ) { Text(stringResource(R.string.mapscreen_no)) }
             Button(
                 onClick = onSwitch,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                    contentColor = MaterialTheme.colorScheme.tertiaryContainer,
-                ),
+                shape = CircleShape,
+                modifier = Modifier.dpadHighlight(CircleShape),
             ) { Text(stringResource(R.string.mapscreen_switch)) }
         }
         // INSIDE the card, where every other progress bar in the app sits (user 2026-09-18: the
@@ -5557,14 +5889,14 @@ private fun SpeedWidget(
     val overColor = Color(0xFFE8514A)
     val signInk = Color(0xFF202124)
 
-    // ONE rounded rectangle in both states (user 2026-07-14): without a posted limit it's a
-    // snug box around just the speed, and when a limit is known the box simply WIDENS as the
-    // sign joins it - the same surface growing, never a second widget or a shape change.
+    // Google's widget is a BLACK rounded square with a WHITE figure and a small
+    // white unit — sampled off the nav screenshot (#000000 box, #FFFFFF digits).
+    // Same surface in both themes: it floats over the map, not the sheet.
     Surface(
         shape = RoundedCornerShape(14.dp),
         border = if (amoled) BorderStroke(1.dp, SheetPalette.BorderAmoled) else null,
-        color = SheetPalette.bg(dark, amoled),
-        contentColor = SheetPalette.ink(dark),
+        color = Color.Black,
+        contentColor = Color.White,
         shadowElevation = 4.dp,
         modifier = modifier,
     ) {
@@ -5603,8 +5935,8 @@ private fun SpeedWidget(
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("$value", fontSize = 25.sp, fontWeight = FontWeight.Bold, lineHeight = 27.sp, color = if (over) overColor else SheetPalette.ink(dark))
-                Text(unit, fontSize = 9.sp, color = SheetPalette.dim(dark), lineHeight = 10.sp)
+                Text("$value", fontSize = 30.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp, color = if (over) overColor else Color.White)
+                Text(unit, fontSize = 12.sp, color = Color.White, lineHeight = 14.sp)
             }
         }
     }
@@ -5685,15 +6017,135 @@ private fun routeBubblesFor(
     }
 }
 
+/** The road the pill names while navigating: the one you are ON (the leg's road, or the last
+ *  silent rename already passed on it, ref first), else, on an unnamed stretch such as an on- or
+ *  off-ramp, the road it leads onto, the one the next instruction names. The pill used to vanish
+ *  the moment a ramp began (user 2026-09-23), which is exactly when the driver wants to know where
+ *  the lane is taking them. */
+private fun navRoadLabel(state: MapUiState): String? {
+    val mans = state.activeRoute?.maneuvers ?: return null
+    val i = state.nav.stepIndex
+    mans.getOrNull(i - 1)?.let { m ->
+        val (name, ref) = m.roadAt(m.distanceMeters - state.nav.distanceToNextManeuver)
+        (ref?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() })?.let { return it }
+    }
+    return mans.getOrNull(i)?.let { next -> next.ref?.takeIf { it.isNotBlank() } ?: next.road?.takeIf { it.isNotBlank() } }
+}
+
 /** The road you are on, for the "Inside the bottom bar" road-name placement (issue #553), or null
  *  when that placement is not chosen or there is nothing to show. Same source as the floating
  *  pill: the leg's road, or the last silent rename already passed on it, ref first. */
 private fun barRoadName(state: MapUiState): String? {
     if (app.vela.ui.RoadLabel.mode.value != app.vela.ui.RoadLabel.IN_BAR) return null
     if (!state.navigating || state.previewStepIndex != null) return null
-    val m = state.activeRoute?.maneuvers?.getOrNull(state.nav.stepIndex - 1) ?: return null
-    val (name, ref) = m.roadAt(m.distanceMeters - state.nav.distanceToNextManeuver)
-    val road = ref?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() } ?: return null
+    val road = navRoadLabel(state) ?: return null
     if (state.roadNameLatin.isEmpty()) return road
     return app.vela.core.voice.SpokenScript.forDisplay(road, app.vela.ui.AppLocale.effective().language, state.roadNameLatin)
+}
+
+/**
+ * The offline area picker (issue #609, Google's shape): the map dimmed outside a frame, a hint
+ * above it and a card below with the live size, the whole-region choice and Download. The frame's
+ * insets are MapViewModel.AREA_FRAME_*, the same fractions the view model turns into the saved
+ * bounds, so what the frame shows is what gets saved. Pan and pinch reach the map through the
+ * frame (nothing here takes the gesture); the cards take their own taps.
+ */
+@Composable
+private fun BoxScope.AreaPickOverlay(state: MapUiState, vm: MapViewModel, zoomButtons: Boolean, onZoom: (Double) -> Unit) {
+    val plan = state.areaPick
+    var withRegion by remember { mutableStateOf(true) }
+    val scrim = Color.Black.copy(alpha = 0.45f)
+    val edge = MaterialTheme.colorScheme.primary
+    androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+        val l = size.width * MapViewModel.AREA_FRAME_L.toFloat()
+        val r = size.width * (1 - MapViewModel.AREA_FRAME_R.toFloat())
+        val t = size.height * MapViewModel.AREA_FRAME_T.toFloat()
+        val b = size.height * (1 - MapViewModel.AREA_FRAME_B.toFloat())
+        drawRect(scrim, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Size(size.width, t))
+        drawRect(scrim, androidx.compose.ui.geometry.Offset(0f, b), androidx.compose.ui.geometry.Size(size.width, size.height - b))
+        drawRect(scrim, androidx.compose.ui.geometry.Offset(0f, t), androidx.compose.ui.geometry.Size(l, b - t))
+        drawRect(scrim, androidx.compose.ui.geometry.Offset(r, t), androidx.compose.ui.geometry.Size(size.width - r, b - t))
+        drawRoundRect(
+            edge, androidx.compose.ui.geometry.Offset(l, t), androidx.compose.ui.geometry.Size(r - l, b - t),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
+        )
+    }
+    Surface(
+        modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Text(
+            stringResource(R.string.area_pick_hint),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
+    Surface(
+        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(12.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            val region = plan?.region
+            Text(
+                when {
+                    plan == null -> stringResource(R.string.area_pick_estimating)
+                    plan.tooLarge && region != null && !plan.regionInstalled -> stringResource(R.string.area_pick_too_large, region.name)
+                    plan.tooLarge -> stringResource(R.string.area_pick_too_large_plain)
+                    else -> stringResource(R.string.area_pick_estimate, app.vela.ui.settings.sections.fmtMb(plan.viewMb))
+                },
+                style = MaterialTheme.typography.titleMedium,
+                color = if (plan?.tooLarge == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            )
+            if (plan != null && region != null && plan.regionInstalled) {
+                Text(
+                    stringResource(R.string.settings_area_confirm_region_have, region.name),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            } else if (plan != null && region != null) {
+                Row(
+                    Modifier.padding(top = 8.dp)
+                        .dpadHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .toggleable(value = withRegion, onValueChange = { v -> withRegion = v }),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.Checkbox(checked = withRegion, onCheckedChange = null)
+                    Text(
+                        stringResource(R.string.settings_area_confirm_region, region.name, app.vela.ui.settings.sections.fmtMb(plan.regionMb)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                // The key path for keypad phones and "Prefer buttons over swipes": touch pinches.
+                if (zoomButtons) {
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { onZoom(-1.0) },
+                        modifier = Modifier.dpadHighlight(androidx.compose.foundation.shape.CircleShape),
+                    ) { Icon(Icons.Default.Remove, contentDescription = stringResource(R.string.mapscreen_zoom_out)) }
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { onZoom(1.0) },
+                        modifier = Modifier.dpadHighlight(androidx.compose.foundation.shape.CircleShape),
+                    ) { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.mapscreen_zoom_in)) }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = { vm.cancelAreaPick() },
+                    modifier = Modifier.dpadHighlight(androidx.compose.foundation.shape.CircleShape),
+                ) { Text(stringResource(R.string.settings_cancel)) }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = { vm.downloadPickedArea(withRegion && region != null && plan?.regionInstalled == false) },
+                    enabled = plan != null && !plan.tooLarge,
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    modifier = Modifier.dpadHighlight(androidx.compose.foundation.shape.CircleShape),
+                ) { Text(stringResource(R.string.settings_download)) }
+            }
+        }
+    }
 }

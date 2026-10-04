@@ -9,19 +9,22 @@ import androidx.compose.ui.graphics.Color
  *
  * Deliberately FIXED (not Material-You tokens) so a wallpaper tint can't wash the
  * text out; choose the variant with the in-app `isAppInDarkTheme()`. Accent color
- * stays the theme `primary` (teal); traffic uses [TrafficGreen]/[TrafficAmber]/
- * [TrafficRed].
+ * stays the theme `primary` (Google Blue); traffic uses [TrafficGreen]/[TrafficAmber]/
+ * [TrafficRed]. Google amber is #FBBC04 on dark, #E8710A on light; Vela traffic
+ * uses one legible value that works on both. Google red is #D93025; Vela keeps
+ * a slightly brighter red for contrast on the dark sheet.
  */
 object SheetPalette {
     val Amoled = Color(0xFF000000)   // pure black for OLED power saving
-    val Dark = Color(0xFF1F1F1F)     // sheet / card background
+    // Google Maps dark chrome: #202124 sheet/body, #303134 search bar + inset rows.
+    val Dark = Color(0xFF202124)     // sheet / card background
     val Light = Color(0xFFFFFFFF)
     val InkDark = Color(0xFFE8EAED)  // primary text
     val InkLight = Color(0xFF202124)
     val DimDark = Color(0xFF9AA0A6)  // secondary text
     val DimLight = Color(0xFF5F6368)
     val RowAmoled = Color(0xFF0D0F11)// inset row / chip background in AMOLED
-    val RowDark = Color(0xFF202124)  // inset row / chip background
+    val RowDark = Color(0xFF303134)  // inset row / chip background
     val RowLight = Color(0xFFF1F3F4)
     val BorderAmoled = Color(0xFF22252A) // subtle separation line for pure black surfaces
 
@@ -29,6 +32,10 @@ object SheetPalette {
     val TrafficGreen = Color(0xFF1E8E3E)
     val TrafficAmber = Color(0xFFE8923D)
     val TrafficRed = Color(0xFFD93838)
+
+    // Google's open/ETA green *text*: vivid on dark, deep on light. TrafficGreen
+    // is the light-theme value; on a dark sheet it reads almost black.
+    fun statusGreen(dark: Boolean) = if (dark) Color(0xFF4CAF50) else TrafficGreen
 
     fun bg(dark: Boolean, amoled: Boolean = false) = when {
         amoled && dark -> Amoled

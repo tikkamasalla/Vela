@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -296,10 +297,10 @@ class GoogleMapsDataSource @Inject constructor(
         if (app.vela.core.data.NoGoogle.enabled) return@io SuggestResult(emptyList(), emptyList())
         session.ensure()
         val at = near ?: DEFAULT_VIEWPORT
-        val span = (spanMeters ?: SUGGEST_SPAN_M).coerceIn(2_000.0, 500_000.0).toInt()
-        val pb = "!2i5!4m12!1m3!1d$span!2d${at.lng}!3d${at.lat}!2m3!1f0!2f0!3f0!3m2!1i1080!2i2000!4f13.1" +
+        val span = RequestShape.span((spanMeters ?: SUGGEST_SPAN_M).coerceIn(2_000.0, 500_000.0))
+        val pb = "!2i5!4m12!1m3!1d$span!2d${at.lng}!3d${at.lat}!2m3!1f0!2f0!3f0!3m2!1i${BrowserViewport.width}!2i${BrowserViewport.height}!4f13.1" +
             "!7i20!10b1!12m6!1m2!18b1!30b1!2m2!1i203!2i100!19m4!1m3!1i1!2i1!3i1!20m1!1e1"
-        val url = "https://www.google.com/s?tbm=map&gs_ri=maps&suggest=p&authuser=0&hl=en&gl=us&pb=${pb.enc()}&q=${query.enc()}&tch=1&ech=1".localized(lang)
+        val url = "https://www.google.com/s?tbm=map&gs_ri=maps&suggest=p&authuser=0&hl=en&gl=us&pb=${pb.enc()}&q=${query.enc()}&tch=1&ech=${RequestShape.nextEch()}".localized(lang)
         val raw = try { get(url) } catch (e: Exception) {
             android.util.Log.w("VelaSuggest", "\"$query\": ${e.javaClass.simpleName} ${e.message}")
             throw e
@@ -388,7 +389,7 @@ class GoogleMapsDataSource @Inject constructor(
                         if (LowRamMode.enabled || LowDataMode.enabled) "!7i30" else "!7i60",
                     )
                 val url = "${cal.searchEndpoint}&q=${term.enc()}&pb=${pb.enc()}".localized()
-                SearchParser.parse(term, GoogleResponse.parse(get(url)), center, cal.paths).places
+                SearchParser.parse(term, GoogleResponse.parse(get(url, kind = "nearby places")), center, cal.paths).places
             }.getOrDefault(emptyList())
         }
         // Dedup by feature id (same place returned under several terms); fall back to name+coords,
@@ -467,7 +468,7 @@ class GoogleMapsDataSource @Inject constructor(
         // Majority (not all-slim): the session can warm MID-burst, leaving a mixed pool.
         val rated = all.count { it.rating != null }
         if (rated >= 3 && all.count { it.rating != null && it.reviewCount == null } > rated / 2) {
-            delay(1200)
+            delay(app.vela.core.util.Jitter.around(1200))
             val healed = coroutineScope { terms.map { term -> async { fetchTerm(term) } }.awaitAll().flatten() }
             if (healed.any { it.reviewCount != null }) {
                 diag.record("ambient", "slim cold-start pool healed: ${all.size} -> ${healed.size} places with counts")
@@ -526,6 +527,63 @@ class GoogleMapsDataSource @Inject constructor(
         runCatching { ReviewsParser.parse(GoogleResponse.parse(get(url))) }.getOrDefault(emptyList())
     }
 
+    override suspend fun reviewFeed(featureId: String, hl: String?, pageToken: String): app.vela.core.data.google.parse.ReviewFeed? = io {
+        if (app.vela.core.data.NoGoogle.enabled) return@io null
+        if (!featureId.contains(":")) return@io null
+        session.ensure()
+        val cal = calibration.current()
+        // The token rides inside a JSON string inside the proto: keep it to the base64url alphabet.
+        val token = pageToken.filter { it.isLetterOrDigit() || it == '-' || it == '_' || it == '=' }
+        val inner = cal.reviewFeedProto.replace("{FID}", featureId).replace("{TOKEN}", token)
+        val freq = "[[[\"qv9Egd\",${JsonPrimitive(inner)},null,\"generic\"]]]"
+        val url = "https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=qv9Egd&source-path=%2Fmaps&hl=en&gl=us" +
+            "&_reqid=${RequestShape.nextReqId()}&rt=c"
+        runCatching {
+            val raw = post(url.localized(hl), "f.req=${freq.enc()}&", aged = true)
+            ReviewFeedDebug.sink?.let { sink -> runCatching { sink(raw) } }
+            app.vela.core.data.google.parse.ReviewFeedParser.parse(raw)
+        }
+            .onFailure { diag.record("reviews", "feed failed: ${it.javaClass.simpleName} ${it.message}") }
+            .getOrNull()
+            ?.also { diag.record("reviews", "feed${if (token.isNotEmpty()) " page" else ""}: ${it.reviews.size} review(s)${if (it.end) ", end of list" else ""}${if (it.nextToken != null) ", more to come" else ""}") }
+    }
+
+    override suspend fun placeDetails(place: app.vela.core.model.Place): app.vela.core.model.PlaceDetails? = io {
+        if (app.vela.core.data.NoGoogle.enabled || place.name.isBlank()) return@io null
+        session.ensure()
+        val cal = calibration.current()
+        // Same query the WebView details fetch builds (WebPopularTimesFetcher.specificQuery): name +
+        // comma-less address, so the reply is the single focused result that carries [84].
+        val addr = place.address?.replace(',', ' ')?.replace(Regex("\\s+"), " ")?.trim()
+        val query = if (addr.isNullOrBlank()) place.name else "${place.name} $addr"
+        val url = "${cal.searchEndpoint}&q=${query.enc()}&pb=${SearchPb.build(query, place.location, cal.searchPb).enc()}".localized()
+        runCatching { app.vela.core.data.google.parse.PopularTimesParser.parse(get(url, aged = true, kind = "place details"), place.featureId, cal.paths) }.getOrNull()
+    }
+
+    override suspend fun placePhotoPage(featureId: String, pageToken: String): app.vela.core.data.google.parse.PhotoPage? = io {
+        if (app.vela.core.data.NoGoogle.enabled || !featureId.contains(":")) return@io null
+        session.ensure()
+        val cal = calibration.current()
+        var inner = cal.photosProto.replace("{FID}", featureId).replace("{COUNT}", PHOTO_COUNT.toString())
+            .replace("[1200,1000]", "[${BrowserViewport.width},${BrowserViewport.height}]")
+        if (pageToken.isNotEmpty()) {
+            // The cursor goes at [4][2][2], beside the page size (found by trying each slot against a
+            // live reply, 2026-09-23). A template of another shape gets no paging rather than a
+            // malformed request.
+            inner = runCatching {
+                val root = kotlinx.serialization.json.Json.parseToJsonElement(inner).jsonArray
+                val paging = root[4].jsonArray[2].jsonArray
+                val newPaging = kotlinx.serialization.json.JsonArray(paging.toMutableList().also { it[2] = JsonPrimitive(pageToken) })
+                val new4 = kotlinx.serialization.json.JsonArray(root[4].jsonArray.toMutableList().also { it[2] = newPaging })
+                kotlinx.serialization.json.JsonArray(root.toMutableList().also { it[4] = new4 }).toString()
+            }.getOrNull() ?: return@io null
+        }
+        val freq = "[[[\"hspqX\",${JsonPrimitive(inner)},null,\"generic\"]]]"
+        runCatching { app.vela.core.data.google.parse.PhotosParser.parsePage(post(RequestShape.batchUrl(cal.photosEndpoint).localized(), "f.req=${freq.enc()}&", aged = true)) }
+            .onFailure { diag.record("photos", "gallery page failed: ${it.javaClass.simpleName}") }
+            .getOrNull()
+    }
+
     override suspend fun placePhotos(featureId: String): List<app.vela.core.model.Photo> = io {
         if (app.vela.core.data.NoGoogle.enabled) return@io emptyList()
         // batchexecute `hspqX` (/MapsPhotoService.ListEntityPhotos) — a keyless POST
@@ -537,9 +595,10 @@ class GoogleMapsDataSource @Inject constructor(
         session.ensure()
         val cal = calibration.current()
         val inner = cal.photosProto.replace("{FID}", featureId).replace("{COUNT}", PHOTO_COUNT.toString())
+            .replace("[1200,1000]", "[${BrowserViewport.width},${BrowserViewport.height}]") // this install's window, not one shared size
         // JsonPrimitive(...).toString() = the proto as a properly-escaped JSON string literal.
         val freq = "[[[\"hspqX\",${JsonPrimitive(inner)},null,\"generic\"]]]"
-        runCatching { PhotosParser.parse(post(cal.photosEndpoint, "f.req=${freq.enc()}")) }.getOrDefault(emptyList())
+        runCatching { PhotosParser.parse(post(RequestShape.batchUrl(cal.photosEndpoint).localized(), "f.req=${freq.enc()}&", aged = true)) }.getOrDefault(emptyList())
     }
 
     override suspend fun streetView(location: LatLng, preferStreet: String?): app.vela.core.model.StreetViewPano? = io {
@@ -581,6 +640,7 @@ class GoogleMapsDataSource @Inject constructor(
 
     private suspend fun streetViewNearest(metaUrl: String, lat: Double, lng: Double): app.vela.core.model.StreetViewPano? {
         val url = metaUrl
+            .replace("callback=cb", "callback=${RequestShape.callbackName()}")
             .replace("{LAT}", "%.7f".format(java.util.Locale.US, lat))
             .replace("{LNG}", "%.7f".format(java.util.Locale.US, lng))
         return runCatching { StreetViewParser.parse(get(url), lat, lng) }.getOrNull()
@@ -730,7 +790,7 @@ class GoogleMapsDataSource @Inject constructor(
                                 snapped = RouteGeometry.routeVia(
                                     http, all, mode, avoidTolls, avoidHighways, avoidFerries, departBearingDeg,
                                     strictVias = true, looseVias = loose, tries = tries, callTimeoutMs = osrmTryMs, budget = budget,
-                                ).firstOrNull()?.takeIf { r ->
+                                ).firstOrNull()?.copy(source = RouteSource.OSRM_VIA_SNAP)?.takeIf { r ->
                                     r.polyline.lastOrNull()?.let { it.distanceTo(destination) <= SNAP_REACH_M } == true &&
                                         r.distanceMeters <= gStops.distanceMeters * SNAP_LENGTH_SLACK + SNAP_LENGTH_SLACK_M &&
                                         !spurWithTurn(r, gStops.polyline)
@@ -903,7 +963,7 @@ class GoogleMapsDataSource @Inject constructor(
                     http, listOf(origin) + RouteGeometry.sampleVias(gTop!!.polyline) + destination, mode,
                     avoidTolls, avoidHighways, avoidFerries, departBearingDeg, strictVias = true,
                     tries = tries, callTimeoutMs = osrmTryMs, budget = budget,
-                ).firstOrNull()
+                ).firstOrNull()?.copy(source = RouteSource.OSRM_VIA_SNAP) // a trip log can tell a jam snap from a plain route
             } else null
             // Cheap checks first, the shape test last (it walks the whole route): the via route
             // must reach the destination and not be markedly LONGER than the course it followed
@@ -1255,7 +1315,7 @@ class GoogleMapsDataSource @Inject constructor(
     private suspend fun googleDirectionsRetried(origin: LatLng, destination: LatLng, mode: TravelMode, tries: Int = 3, avoidTolls: Boolean = false, avoidHighways: Boolean = false, avoidFerries: Boolean = false, waypoints: List<LatLng> = emptyList()): List<Route> {
         var routes: List<Route> = emptyList()
         for (attempt in 0 until tries) {
-            if (attempt > 0) kotlinx.coroutines.delay(300L * attempt)
+            if (attempt > 0) kotlinx.coroutines.delay(app.vela.core.util.Jitter.around(300L * attempt, 0.5))
             routes = runCatching { googleDirections(origin, destination, mode, avoidTolls, avoidHighways, avoidFerries, waypoints) }.getOrNull().orEmpty()
             if (routes.isNotEmpty()) return routes
         }
@@ -1302,22 +1362,29 @@ class GoogleMapsDataSource @Inject constructor(
         if (app.vela.core.data.NoGoogle.enabled) return@io null
         runCatching {
             session.ensure()
-            val html = get(shareUrl.trim())
+            val html = get(shareUrl.trim(), kind = "shared list")
             val href = Regex("""(/maps/preview/entitylist/getlist\?[^"'\s]+)""")
                 .find(html)?.groupValues?.get(1)
                 ?.replace("&amp;", "&")
                 ?: return@runCatching null
-            EntityListParser.parse(get("https://www.google.com$href"))
+            EntityListParser.parse(get("https://www.google.com$href", kind = "shared list"))
         }.getOrNull()
     }
 
     // --- plumbing -----------------------------------------------------------
 
-    private fun get(url: String): String {
+    /** [aged]: a per-place request (details, photos, the review feed) that rides the WebView's aged
+     *  Google session when calibration `agedSession` is on (default 1), see [AgedSession]. */
+    private fun agedTag(b: Request.Builder, aged: Boolean): Request.Builder =
+        if (aged && calibration.current().tune("agedSession", 1.0) >= 0.5) b.tag(app.vela.core.net.AgedSession::class.java, app.vela.core.net.AgedSession) else b
+
+    private fun get(url: String, aged: Boolean = false, kind: String? = null): String {
         val cal = calibration.current()
         val req = Request.Builder()
             .url(url)
+            .apply { kind?.let { tag(app.vela.core.net.GoogleUsage.Kind::class.java, app.vela.core.net.GoogleUsage.Kind(it)) } }
             .browserXhrHeaders(cal.userAgent, cal.secChUa, MAPS_REFERER)
+            .let { agedTag(it, aged) }
             .build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
@@ -1327,7 +1394,7 @@ class GoogleMapsDataSource @Inject constructor(
         }
     }
 
-    private fun post(url: String, body: String): String {
+    private fun post(url: String, body: String, aged: Boolean = false): String {
         val cal = calibration.current()
         val media = "application/x-www-form-urlencoded;charset=UTF-8".toMediaType()
         val req = Request.Builder()
@@ -1335,6 +1402,8 @@ class GoogleMapsDataSource @Inject constructor(
             .post(body.toRequestBody(media))
             .browserXhrHeaders(cal.userAgent, cal.secChUa, MAPS_REFERER)
             .header("X-Same-Domain", "1") // batchexecute expects this from a same-origin caller
+            .apply { if (cal.rpcContext.isNotBlank()) header("x-maps-diversion-context-bin", cal.rpcContext) } // the gate; see Calibration.rpcContext
+            .let { agedTag(it, aged) }
             .build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
@@ -1358,6 +1427,7 @@ class GoogleMapsDataSource @Inject constructor(
                 fetchDest = "image",
                 fetchMode = "no-cors",
                 fetchSite = "cross-site",
+                networkHints = false,
             )
             .build()
         http.newCall(req).execute().use { resp ->

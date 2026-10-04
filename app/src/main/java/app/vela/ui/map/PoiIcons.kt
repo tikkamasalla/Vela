@@ -156,9 +156,9 @@ object PoiIcons {
         style.addImage(key, bmp)
     }
 
-    /** Register a NUMBERED STOP pin ("vela-stopnum-<n>"): brand-teal circle, white ring and
+    /** Register a NUMBERED STOP pin ("vela-stopnum-<n>"): Google-Blue circle, white ring and
      *  number, a short tail so the tip marks the spot - the trip's intermediate stops drawn in
-     *  visit order (theme-independent; the teal is VelaTeal, bitmaps can't read the theme). */
+     *  visit order (theme-independent; the blue is VelaTeal, bitmaps can't read the theme). */
     /** The DESTINATION pin: the same teardrop as a numbered stop, wearing a flag instead of a
      *  number, so the end of a trip reads as the end and not as "one more stop" (user 2026-09-17). */
     fun ensureDestinationPin(style: Style, context: Context): String = ensureStopNumberIcon(style, DESTINATION_PIN, context)
@@ -168,7 +168,7 @@ object PoiIcons {
 
     /** Sentinel [n] for [ensureStopNumberIcon]: the place a tap has OFFERED as a stop mid-drive.
      *  Same teardrop as a real stop so it reads as the same kind of thing, in the result red with
-     *  a plus rather than the stops' teal and a number - it is not on the trip until the card's
+     *  a plus rather than the stops' blue and a number - it is not on the trip until the card's
      *  button says so. */
     const val CANDIDATE_PIN = -2
 
@@ -209,7 +209,7 @@ object PoiIcons {
             maskFilter = BlurMaskFilter(w * 0.05f, BlurMaskFilter.Blur.NORMAL)
         })
         canvas.restore()
-        // White outline so the pin separates from any basemap/imagery, then the teal body.
+        // White outline so the pin separates from any basemap/imagery, then the blue body.
         canvas.drawPath(teardrop, Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             setStyle(Paint.Style.STROKE) // explicit setter - `style` resolves to the fn param
@@ -218,7 +218,7 @@ object PoiIcons {
         canvas.drawPath(
             teardrop,
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor(if (n == CANDIDATE_PIN) RESULT_RED else "#14857A")
+                color = Color.parseColor(if (n == CANDIDATE_PIN) RESULT_RED else "#1A73E8")
             },
         )
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
